@@ -1,26 +1,77 @@
 /**
- * Amazon の書籍ページに注文パネルを差し込む content script。
+ * 対応サイトの書籍ページに注文パネルを差し込む content script。
  *
  * MV3 の content script は classic script なので、ESM の core は
  * chrome.runtime.getURL + 動的 import で読み込む（ビルド不要を維持するため）。
  *
- * DOM セレクタは Amazon 側の変更で壊れる前提。壊れたら
- * PANEL_ANCHORS / PAGE_HINTS を足すだけで直るように 1 箇所に集めてある。
+ * DOM セレクタは各サイト側の変更で壊れる前提。壊れたら SITES の該当エントリを
+ * 直すだけで済むように、サイト別設定（アンカー・ヒント・書誌フォールバック）を
+ * この 1 箇所に集めてある。
  */
 
 const PANEL_ID = 'jimoto-panel';
 
-/** パネルを差し込みたい場所の候補（上から順に試す） */
-const PANEL_ANCHORS = [
-  '#buybox',
-  '#desktop_buybox',
-  '#rightCol',
-  '#addToCart',
-  '#centerCol',
+/**
+ * サイト別設定。
+ * - host: location.hostname に対する判定。どれにも当たらなければ何もしない
+ * - anchors: パネルを差し込みたい場所の候補（上から順に試す。全滅なら floating）
+ * - hints: ISBN 抽出用テキストを拾うセレクタ（title・meta は全サイト共通で拾う）
+ * - fallback: openBD が空振りしたときにページから拾う書誌。
+ *   実査できていないサイトは「何も拾わない」で openBD に任せる
+ */
+const SITES = [
+  {
+    name: 'amazon',
+    host: /(^|\.)amazon\.(co\.jp|com)$/,
+    anchors: ['#buybox', '#desktop_buybox', '#rightCol', '#addToCart', '#centerCol'],
+    hints: [
+      '#detailBullets_feature_div',
+      '#productDetailsTable',
+      '#bookDescription_feature_div',
+      '#detailBullets',
+    ],
+    fallback: () => {
+      const title = document.querySelector('#productTitle')?.textContent?.trim() || '';
+      const author =
+        document.querySelector('#bylineInfo')?.textContent?.trim().replace(/\s+/g, ' ') || '';
+      const priceText =
+        document.querySelector('.a-price .a-offscreen')?.textContent ||
+        document.querySelector('#price')?.textContent ||
+        '';
+      const price = Number(String(priceText).replace(/[^0-9]/g, '')) || null;
+      return { title, author, price };
+    },
+  },
+  {
+    // URL は内部 ID（/rb/<数字>/）で ISBN を含まないため、テキスト経路で取る。
+    // meta・title・本文の 3 経路を冗長に渡す（実査 2026-08-07、docs/research.md）
+    name: 'rakuten-books',
+    host: /(^|\.)books\.rakuten\.co\.jp$/,
+    // 実査で確認した ID。上から順に試す
+    anchors: ['#purchaseBox', '#productInfo', '#productTitle', '#main'],
+    hints: ['#productTitle', '#productInfo'],
+    fallback: () => ({
+      title: document.querySelector('#productTitle')?.textContent?.trim() || '',
+    }),
+  },
+  {
+    // ISBN は URL から取れる（core/isbn.js の url-kinokuniya）ので DOM 依存なし。
+    // アンカーは未実査のため汎用の控えめな候補のみ。外れたら floating に任せる
+    name: 'kinokuniya',
+    host: /(^|\.)kinokuniya\.co\.jp$/,
+    anchors: ['main'],
+    hints: [],
+    fallback: () => ({}), // 書誌セレクタ未実査。openBD 頼みで良い
+  },
+  {
+    // 同上: ISBN は URL 直埋め込み（url-maruzen）。アンカー未実査
+    name: 'maruzen',
+    host: /(^|\.)maruzenjunkudo\.co\.jp$/,
+    anchors: ['main'],
+    hints: [],
+    fallback: () => ({}),
+  },
 ];
-
-/** 書籍ページらしさの手がかり */
-const PAGE_HINTS = ['#detailBullets_feature_div', '#productDetailsTable', '#bookDescription_feature_div'];
 
 const url = (p) => chrome.runtime.getURL(p);
 
@@ -35,22 +86,18 @@ async function loadCore() {
   return { ...isbnMod, ...biblio, ...profileMod, ...compose, ...storage };
 }
 
-function pageText() {
-  const parts = PAGE_HINTS.map((s) => document.querySelector(s)?.innerText || '');
-  parts.push(document.querySelector('#detailBullets')?.innerText || '');
+/**
+ * ISBN 抽出に使うテキストを組み立てる。
+ * document.title と ISBN 系 meta はサイトを問わず拾う（楽天ブックスの主経路。
+ * 他サイトでは単に空振りするだけで害がない）。
+ */
+function pageText(site) {
+  const parts = [document.title];
+  for (const m of document.querySelectorAll('meta[name*="isbn" i], meta[property*="isbn" i]')) {
+    parts.push(m.getAttribute('content') || '');
+  }
+  for (const s of site.hints) parts.push(document.querySelector(s)?.innerText || '');
   return parts.join('\n');
-}
-
-/** Amazon ページから拾える範囲の書誌（openBD が空振りしたときの保険） */
-function pageFallback() {
-  const title = document.querySelector('#productTitle')?.textContent?.trim() || '';
-  const author = document.querySelector('#bylineInfo')?.textContent?.trim().replace(/\s+/g, ' ') || '';
-  const priceText =
-    document.querySelector('.a-price .a-offscreen')?.textContent ||
-    document.querySelector('#price')?.textContent ||
-    '';
-  const price = Number(String(priceText).replace(/[^0-9]/g, '')) || null;
-  return { title, author, price };
 }
 
 function el(tag, attrs = {}, children = []) {
@@ -235,9 +282,9 @@ async function buildPanel(core, book) {
   return { panel, refreshBook };
 }
 
-function mount(panel) {
+function mount(panel, site) {
   document.getElementById(PANEL_ID)?.remove();
-  for (const sel of PANEL_ANCHORS) {
+  for (const sel of site.anchors) {
     const anchor = document.querySelector(sel);
     if (anchor) {
       anchor.prepend(panel);
@@ -250,8 +297,11 @@ function mount(panel) {
 }
 
 async function run() {
+  const site = SITES.find((s) => s.host.test(location.hostname));
+  if (!site) return; // 対応サイト以外では何もしない
+
   const core = await loadCore();
-  const { isbn13, source } = core.extractIsbn({ url: location.href, text: pageText() });
+  const { isbn13, source } = core.extractIsbn({ url: location.href, text: pageText(site) });
   if (!isbn13) return; // 書籍ページでない、または ISBN を持たない商品
 
   // openBD の応答（最大 8 秒）を待たずに、まず骨組みを表示する。
@@ -260,10 +310,10 @@ async function run() {
   const book = { isbn13, source: 'loading' };
   const { panel, refreshBook } = await buildPanel(core, book);
   refreshBook(true);
-  mount(panel);
+  mount(panel, site);
 
   const fetched = await core.fetchBook(isbn13);
-  const merged = core.mergeFallback(fetched, { isbn13, ...pageFallback() });
+  const merged = core.mergeFallback(fetched, { isbn13, ...site.fallback() });
   merged.isbn13 = isbn13;
   if (!fetched) merged.source = `page:${source}`;
   Object.assign(book, merged);
@@ -278,4 +328,4 @@ function tick() {
 }
 
 tick();
-setInterval(tick, 1500); // Amazon は部分遷移するため URL を監視する
+setInterval(tick, 1500); // Amazon 等は部分遷移するため URL を監視する

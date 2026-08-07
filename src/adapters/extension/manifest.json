@@ -12,7 +12,13 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://www.amazon.co.jp/*", "https://www.amazon.com/*"],
+      "matches": [
+        "https://www.amazon.co.jp/*",
+        "https://www.amazon.com/*",
+        "https://books.rakuten.co.jp/*",
+        "https://www.kinokuniya.co.jp/*",
+        "https://www.maruzenjunkudo.co.jp/*"
+      ],
       "js": ["content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
@@ -21,7 +27,13 @@
   "web_accessible_resources": [
     {
       "resources": ["core/*.js"],
-      "matches": ["https://www.amazon.co.jp/*", "https://www.amazon.com/*"]
+      "matches": [
+        "https://www.amazon.co.jp/*",
+        "https://www.amazon.com/*",
+        "https://books.rakuten.co.jp/*",
+        "https://www.kinokuniya.co.jp/*",
+        "https://www.maruzenjunkudo.co.jp/*"
+      ]
     }
   ]
 }

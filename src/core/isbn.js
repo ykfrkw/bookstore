@@ -55,13 +55,29 @@ export function display(s) {
 }
 
 /**
- * Amazon の URL / ページ文字列から ISBN 候補を拾う。
+ * 対応サイトの URL / ページ文字列から ISBN 候補を拾う。
  * DOM に依存しない純関数にしてあるので、ローカルページでも同じものを使う。
+ * URL 判定はホストごとに分岐し、該当ホスト以外では従来（Amazon）どおり動く。
  * @param {{url?: string, text?: string}} input
  * @returns {{isbn13: string|null, source: string}}
  */
 export function extractIsbn({ url = '', text = '' } = {}) {
-  // 1) URL の ASIN が ISBN-10 として妥当なら採用（和書のほとんどがこれ）
+  // 0) 紀伊國屋ウェブストア: /f/dsg-01-<13桁>（和書）・dsg-02（洋書）に ISBN-13 が
+  //    直接埋め込まれている。dsg-08（電子書籍）は意図的に対象外 —
+  //    電子版の ISBN で紙の本を発注する事故を防ぐため。
+  //    チェックディジット不正なら URL 経路では採用せず、テキスト経路に落とす。
+  const kino = url.match(
+    /^https?:\/\/(?:[^/]+\.)?kinokuniya\.co\.jp\/f\/dsg-0[12]-([0-9]{13})/i
+  )?.[1];
+  if (kino && isValidIsbn13(kino)) return { isbn13: kino, source: 'url-kinokuniya' };
+
+  // 0') 丸善ジュンク堂ネットストア（Shopify 系）: /products/<13桁> が ISBN-13
+  const mj = url.match(
+    /^https?:\/\/(?:[^/]+\.)?maruzenjunkudo\.co\.jp\/products\/([0-9]{13})/i
+  )?.[1];
+  if (mj && isValidIsbn13(mj)) return { isbn13: mj, source: 'url-maruzen' };
+
+  // 1) URL の ASIN が ISBN-10 として妥当なら採用（Amazon 和書のほとんどがこれ）
   const asin = url.match(/\/(?:dp|gp\/product|product)\/([A-Z0-9]{10})/i)?.[1];
   if (asin && isValidIsbn10(asin)) {
     return { isbn13: toIsbn13(asin), source: 'asin' };

@@ -46,3 +46,41 @@ test('雑誌コードなどの裸の 13 桁は拾わない', () => {
   const r = extractIsbn({ url: '', text: '商品コード 1234567890123' });
   assert.equal(r.isbn13, null);
 });
+
+test('紀伊國屋 URL（和書 dsg-01）から ISBN を取る', () => {
+  const r = extractIsbn({ url: 'https://www.kinokuniya.co.jp/f/dsg-01-9784478025819' });
+  assert.equal(r.isbn13, '9784478025819');
+  assert.equal(r.source, 'url-kinokuniya');
+});
+
+test('紀伊國屋 URL（洋書 dsg-02）からも ISBN を取る', () => {
+  const r = extractIsbn({ url: 'https://www.kinokuniya.co.jp/f/dsg-02-9780262033848' });
+  assert.equal(r.isbn13, '9780262033848');
+  assert.equal(r.source, 'url-kinokuniya');
+});
+
+test('紀伊國屋の電子書籍（dsg-08）は URL 経路で拾わない', () => {
+  // 電子版の ISBN で紙の本を発注する事故を防ぐため、意図的に対象外
+  const r = extractIsbn({ url: 'https://www.kinokuniya.co.jp/f/dsg-08-9784478025819' });
+  assert.equal(r.isbn13, null);
+});
+
+test('紀伊國屋 URL のチェックディジット不正は採用しない', () => {
+  const r = extractIsbn({ url: 'https://www.kinokuniya.co.jp/f/dsg-01-9784478025810' });
+  assert.equal(r.isbn13, null);
+});
+
+test('丸善ジュンク堂 /products/ URL から ISBN を取る', () => {
+  const r = extractIsbn({ url: 'https://www.maruzenjunkudo.co.jp/products/9784478025819' });
+  assert.equal(r.isbn13, '9784478025819');
+  assert.equal(r.source, 'url-maruzen');
+});
+
+test('楽天ブックス相当: URL に ISBN が無くても title 由来のテキストから取れる', () => {
+  const r = extractIsbn({
+    url: 'https://books.rakuten.co.jp/rb/12345678/',
+    text: 'ダイヤモンド社の本 - 楽天ブックス\n9784478025819',
+  });
+  assert.equal(r.isbn13, '9784478025819');
+  assert.equal(r.source, 'page-bare');
+});
