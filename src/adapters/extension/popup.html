@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body {
+        font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+        width: 340px; margin: 0; padding: 14px; color: #111827; font-size: 13px;
+      }
+      h1 { font-size: 14px; margin: 0 0 10px; }
+      .item { border-bottom: 1px solid #e5e7eb; padding: 8px 0; display: flex; gap: 8px; align-items: flex-start; }
+      .item .t { flex: 1; min-width: 0; }
+      .item .t b { display: block; font-weight: 600; }
+      .item .t span { color: #6b7280; font-size: 11px; }
+      .item input { width: 46px; padding: 3px; border: 1px solid #cbd5e1; border-radius: 5px; font: inherit; }
+      .item button { border: none; background: none; color: #9ca3af; cursor: pointer; font-size: 15px; }
+      .row { display: flex; gap: 6px; align-items: center; margin-top: 10px; }
+      select { flex: 1; padding: 5px; border: 1px solid #cbd5e1; border-radius: 6px; font: inherit; }
+      .actions { display: flex; gap: 6px; margin-top: 12px; }
+      button.act { flex: 1; padding: 7px; border-radius: 999px; border: 1px solid #cbd5e1; background: #f8fafc; cursor: pointer; font: inherit; }
+      button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; font-weight: 600; }
+      .empty { color: #6b7280; padding: 18px 0; text-align: center; }
+      a { color: #6b7280; font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <h1>まとめ注文リスト</h1>
+    <div id="list"></div>
+    <div class="row"><label>注文先</label><select id="route"></select></div>
+    <div class="row" id="funding-row">
+      <label>支払</label>
+      <select id="funding">
+        <option value="research">研究費</option>
+        <option value="private">私費</option>
+      </select>
+      <select id="source"></select>
+    </div>
+    <div class="actions">
+      <button class="act primary" id="mail">1通にまとめてメール</button>
+      <button class="act" id="copy">コピー</button>
+    </div>
+    <div class="actions"><button class="act" id="clear">リストを空にする</button></div>
+    <div style="margin-top: 10px"><a href="#" id="opt">設定</a></div>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

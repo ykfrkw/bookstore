@@ -1,0 +1,15 @@
+{
+  "name": "bookstore",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Amazon の書籍ページから、大学生協（研究費/私費）または地元書店への注文メール下書きを作る。Chrome 拡張とローカルページの両方で動く。",
+  "type": "module",
+  "scripts": {
+    "sync": "node scripts/sync-core.mjs",
+    "dev": "node scripts/sync-core.mjs --watch",
+    "local": "node scripts/sync-core.mjs && npx --yes http-server src -p 8787 -c-1 -o /adapters/local/index.html",
+    "test": "node --test \"test/*.test.mjs\"",
+    "build": "node scripts/sync-core.mjs && node scripts/pack.mjs"
+  },
+  "devDependencies": {}
+}

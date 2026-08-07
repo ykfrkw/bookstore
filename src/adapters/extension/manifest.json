@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "地元で買う — 生協・書店注文アシスタント",
+  "version": "0.1.0",
+  "description": "Amazon の書籍ページから、大学生協（研究費/私費）または地元書店への注文メール下書きを作ります。",
+  "permissions": ["storage"],
+  "host_permissions": ["https://api.openbd.jp/*"],
+  "options_page": "options.html",
+  "action": {
+    "default_title": "地元で買う",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.amazon.co.jp/*", "https://www.amazon.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["core/*.js"],
+      "matches": ["https://www.amazon.co.jp/*", "https://www.amazon.com/*"]
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+# --- セキュリティ標準ブロック（全リポジトリ共通） ---
+.env
+.env.*
+*.pem
+*.key
+*credentials*
+*secret*
+*.p12
+*.pfx
+
+# --- OS / エディタ ---
+.DS_Store
+Thumbs.db
+
+# --- 依存・生成物 ---
+node_modules/
+dist/
+
+# extension/core は sync-core.mjs の生成物（src/core が正）
+src/adapters/extension/core/

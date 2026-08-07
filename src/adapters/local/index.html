@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>地元で買う — ローカル版</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+        max-width: 800px; margin: 32px auto 80px; padding: 0 20px; line-height: 1.6;
+      }
+      h1 { font-size: 20px; }
+      h2 { font-size: 15px; margin-top: 28px; border-bottom: 1px solid #8883; padding-bottom: 6px; }
+      p.hint { color: #6b7280; font-size: 13px; margin-top: -2px; }
+      label { display: block; margin-top: 10px; font-size: 13px; }
+      input, select, textarea {
+        width: 100%; padding: 7px 9px; margin-top: 3px; font: inherit; font-size: 14px;
+        border: 1px solid #8885; border-radius: 7px; background: transparent; color: inherit;
+      }
+      textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
+      .row { display: flex; gap: 8px; align-items: flex-end; }
+      button { font: inherit; padding: 8px 16px; border-radius: 999px; border: 1px solid #8885; background: transparent; color: inherit; cursor: pointer; }
+      button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; font-weight: 600; }
+      .item { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid #8883; }
+      .item .t { flex: 1; min-width: 0; }
+      .item .t b { display: block; }
+      .item .t span { color: #6b7280; font-size: 12px; }
+      .item input { width: 64px; }
+      .bad { color: #b91c1c; font-size: 13px; }
+      details summary { cursor: pointer; font-size: 14px; font-weight: 600; margin-top: 24px; }
+      .actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+    </style>
+  </head>
+  <body>
+    <h1>地元で買う — ローカル版</h1>
+    <p class="hint">
+      Chrome 拡張と同じ core をそのまま使います。Amazon の URL でも ISBN でも、
+      1 行に 1 件ずつ貼り付けてください。設定はこのブラウザの localStorage に保存されます。
+    </p>
+
+    <h2>1. 書籍を入れる</h2>
+    <label>
+      Amazon URL / ISBN（複数行可）
+      <textarea id="input" rows="5" placeholder="https://www.amazon.co.jp/dp/4000612344&#10;978-4-00-061234-5"></textarea>
+    </label>
+    <div class="actions">
+      <button class="primary" id="lookup">書誌を取得</button>
+      <button id="clear">クリア</button>
+    </div>
+    <div id="errors" class="bad"></div>
+    <div id="list"></div>
+
+    <h2>2. 注文先</h2>
+    <div class="grid">
+      <label>ルート<select id="route"><option value="coop">大学生協</option><option value="bookstore">地元書店</option></select></label>
+      <label>支払区分<select id="funding"><option value="research">研究費</option><option value="private">私費</option></select></label>
+    </div>
+    <label id="source-wrap">財源<select id="source"></select></label>
+    <label>ひとこと添える（任意）<input id="message" /></label>
+
+    <div class="actions">
+      <button class="primary" id="compose">注文メールを作る</button>
+      <button id="mailto">メーラーで開く</button>
+      <button id="copy">コピー</button>
+      <button id="copy-remarks">備考欄の1行をコピー</button>
+    </div>
+
+    <label>件名<input id="out-subject" readonly /></label>
+    <label>本文<textarea id="out-body" rows="22"></textarea></label>
+
+    <details>
+      <summary>設定</summary>
+      <div class="grid">
+        <label>氏名<input data-p="requester.name" /></label>
+        <label>ふりがな<input data-p="requester.kana" /></label>
+      </div>
+      <label>所属<input data-p="requester.affiliation" /></label>
+      <div class="grid">
+        <label>メール<input data-p="requester.email" /></label>
+        <label>電話<input data-p="requester.phone" /></label>
+      </div>
+      <label>配達場所<input data-p="requester.deliveryPlace" /></label>
+
+      <h2>大学生協</h2>
+      <div class="grid">
+        <label>表示名<input data-p="coop.label" /></label>
+        <label>受取店舗<input data-p="coop.storeName" /></label>
+      </div>
+      <div class="grid">
+        <label>宛先メール<input data-p="coop.to" /></label>
+        <label>受取方法<input data-p="coop.receiveMethod" /></label>
+      </div>
+
+      <h2>地元書店</h2>
+      <div class="grid">
+        <label>店名<input data-p="bookstore.storeName" /></label>
+        <label>宛先メール<input data-p="bookstore.to" /></label>
+      </div>
+
+      <h2>研究費の財源（1件のみ簡易編集）</h2>
+      <div class="grid">
+        <label>名称<input id="fs-label" placeholder="科研費 基盤(C)" /></label>
+        <label>課題番号<input id="fs-code" /></label>
+      </div>
+      <label>予算代表者<input id="fs-rep" /></label>
+
+      <div class="actions"><button class="primary" id="save">設定を保存</button><span id="saved"></span></div>
+    </details>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
