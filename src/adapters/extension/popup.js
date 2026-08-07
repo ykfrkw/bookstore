@@ -73,13 +73,14 @@ async function init() {
 $('route').addEventListener('change', syncVisibility);
 $('funding').addEventListener('change', syncVisibility);
 
-$('mail').addEventListener('click', () => {
+$('mail').addEventListener('click', async () => {
   if (!cart.length) return;
   const missing = validate(profile, $('route').value);
   if (missing.length) return chrome.runtime.openOptionsPage();
   const d = draft();
   if (d.tooLongForMailto) {
-    navigator.clipboard.writeText(d.body);
+    // tabs.create で popup が閉じるため、コピー完了を待ってから開く
+    await navigator.clipboard.writeText(d.body);
     chrome.tabs.create({ url: d.mailtoHeaderOnly });
     return;
   }

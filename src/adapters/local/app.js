@@ -132,11 +132,11 @@ $('route').addEventListener('change', syncVisibility);
 $('funding').addEventListener('change', syncVisibility);
 $('compose').addEventListener('click', compose);
 
-$('mailto').addEventListener('click', () => {
+$('mailto').addEventListener('click', async () => {
   const d = lastDraft || compose();
   if (!d) return;
   if (d.tooLongForMailto) {
-    navigator.clipboard.writeText(d.body);
+    await navigator.clipboard.writeText(d.body);
     $('errors').textContent =
       '本文をコピーしました。開いたメールに貼り付けてください（和文は mailto の長さ制限を超えるため）。';
     location.href = d.mailtoHeaderOnly;
