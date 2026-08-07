@@ -3,7 +3,7 @@
  *   node scripts/pack.mjs
  */
 import { execFileSync } from 'node:child_process';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm, readdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
@@ -14,7 +14,16 @@ const dist = join(root, 'dist');
 const version = JSON.parse(readFileSync(join(ext, 'manifest.json'), 'utf8')).version;
 const out = join(dist, `bookstore-${version}.zip`);
 
+// 「ディレクトリ丸ごと」ではなく allowlist 方式で zip する。
+// .DS_Store やエディタの一時ファイル等が提出物に紛れ込む事故を防ぐため。
+const files = (await readdir(ext)).filter(
+  (f) => f === 'manifest.json' || /\.(html|js|css)$/.test(f)
+);
+const coreFiles = (await readdir(join(ext, 'core')))
+  .filter((f) => f.endsWith('.js'))
+  .map((f) => `core/${f}`);
+
 await rm(out, { force: true });
 await mkdir(dist, { recursive: true });
-execFileSync('zip', ['-r', '-q', out, '.', '-x', '*.DS_Store'], { cwd: ext });
-console.log(`[pack] ${out}`);
+execFileSync('zip', ['-q', out, ...files, ...coreFiles], { cwd: ext });
+console.log(`[pack] ${out} (${files.length + coreFiles.length} files)`);

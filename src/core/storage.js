@@ -24,7 +24,14 @@ function localStorageBackend() {
   return {
     async get(k) {
       const raw = globalThis.localStorage.getItem(k);
-      return raw ? JSON.parse(raw) : null;
+      if (!raw) return null;
+      try {
+        return JSON.parse(raw);
+      } catch {
+        // 他拡張やユーザー操作で壊れた JSON が入っていても起動不能にしない。
+        // 未保存扱い（null）に落とせば withDefaults が既定値で埋めてくれる。
+        return null;
+      }
     },
     async set(k, v) {
       globalThis.localStorage.setItem(k, JSON.stringify(v));

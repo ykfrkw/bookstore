@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { composeOrder, fundingLabel, remarksLine, MAILTO_SAFE_LENGTH } from '../src/core/compose.js';
+import { composeOrder, fundingLabel, remarksLine, buildMailto, MAILTO_SAFE_LENGTH } from '../src/core/compose.js';
 import { withDefaults, validate } from '../src/core/profile.js';
 
 const profile = withDefaults({
@@ -88,6 +88,35 @@ test('和文の注文メールは 1 冊でも mailto 長制限を超えるので
   assert.equal(d.tooLongForMailto, true);
   assert.ok(d.encodedLength > MAILTO_SAFE_LENGTH);
   assert.ok(d.mailtoHeaderOnly.length < MAILTO_SAFE_LENGTH);
+});
+
+test('buildMailto: 短い ASCII 本文は mailto に収まる', () => {
+  const d = buildMailto({ to: 'a@example.com', cc: 'cc@example.com', subject: 'Sub', body: 'short body' });
+  assert.equal(d.tooLongForMailto, false);
+  assert.ok(d.mailto.startsWith('mailto:a%40example.com?'));
+  assert.ok(d.mailto.includes('body='));
+  assert.ok(d.mailto.includes('cc='));
+  assert.ok(!d.mailtoHeaderOnly.includes('body='));
+  assert.ok(d.mailtoHeaderOnly.includes('cc='));
+  assert.equal(d.encodedLength, d.mailto.length);
+  assert.equal(d.plain, 'To: a@example.com\nSubject: Sub\n\nshort body');
+});
+
+test('buildMailto: 長い和文本文では tooLongForMailto になり、header-only は短いまま', () => {
+  const d = buildMailto({ to: 'a@example.com', subject: '件名', body: 'あ'.repeat(400) });
+  assert.equal(d.tooLongForMailto, true);
+  assert.ok(d.encodedLength > MAILTO_SAFE_LENGTH);
+  assert.ok(d.mailtoHeaderOnly.length < MAILTO_SAFE_LENGTH);
+  assert.ok(!d.mailtoHeaderOnly.includes('cc=')); // cc 未指定なら付けない
+});
+
+test('buildMailto: composeOrder の mailto と一致する（実装が一本化されている）', () => {
+  const d = composeOrder({ route: 'coop', items, profile });
+  const m = buildMailto({ to: d.to, cc: d.cc, subject: d.subject, body: d.body });
+  assert.equal(m.mailto, d.mailto);
+  assert.equal(m.mailtoHeaderOnly, d.mailtoHeaderOnly);
+  assert.equal(m.tooLongForMailto, d.tooLongForMailto);
+  assert.equal(m.plain, d.plain);
 });
 
 test('備考欄用の1行', () => {

@@ -65,10 +65,24 @@ function el(tag, attrs = {}, children = []) {
   return n;
 }
 
-function toast(msg) {
+/**
+ * @param {string} msg
+ * @param {'info'|'error'} [kind] エラー時のみ赤系の左ボーダーで区別する
+ */
+function toast(msg, kind = 'info') {
   const t = el('div', { class: 'jimoto-toast', text: msg });
+  if (kind === 'error') t.classList.add('jimoto-toast-error');
+  // スクリーンリーダーにも通知内容が届くようにする
+  t.setAttribute('aria-live', 'polite');
+  t.setAttribute('role', 'status');
   document.body.append(t);
   setTimeout(() => t.remove(), 2600);
+}
+
+// 冊数の下限は 1。非数値・0 以下が composeOrder に流れ込むのを防ぐ
+function clampQty(v) {
+  const n = Math.floor(Number(v));
+  return Number.isFinite(n) && n >= 1 ? n : 1;
 }
 
 async function buildPanel(core, book) {
@@ -105,7 +119,17 @@ async function buildPanel(core, book) {
   );
   sourceSel.value = state.fundingSourceId;
 
-  const qty = el('input', { class: 'jimoto-input jimoto-qty', type: 'number', min: '1', value: String(state.quantity) });
+  const qty = el('input', {
+    class: 'jimoto-input jimoto-qty',
+    type: 'number',
+    min: '1',
+    inputmode: 'numeric',
+    value: String(clampQty(state.quantity)),
+  });
+  // 空欄・0・マイナスのまま送信されないよう、フォーカスが外れた時点で 1 に戻す
+  qty.addEventListener('change', () => {
+    qty.value = String(clampQty(qty.value));
+  });
 
   const fundingRow = el('div', { class: 'jimoto-row' }, [
     el('label', { class: 'jimoto-label', text: '支払' }),
@@ -121,7 +145,7 @@ async function buildPanel(core, book) {
   routeSel.addEventListener('change', syncVisibility);
   fundingSel.addEventListener('change', syncVisibility);
 
-  const item = () => ({ book, quantity: Number(qty.value) || 1 });
+  const item = () => ({ book, quantity: clampQty(qty.value) });
   const orderArgs = () => ({
     route: routeSel.value,
     profile,
@@ -132,7 +156,7 @@ async function buildPanel(core, book) {
   const openMail = async () => {
     const missing = core.validate(profile, routeSel.value);
     if (missing.length) {
-      toast(`設定が未入力です: ${missing.join(' / ')}`);
+      toast(`設定が未入力です: ${missing.join(' / ')}`, 'error');
       chrome.runtime.openOptionsPage?.();
       return;
     }
@@ -165,10 +189,26 @@ async function buildPanel(core, book) {
     toast(`まとめ注文リストに追加（${cart.length}点）`);
   };
 
+  // 書誌はあとから（openBD 応答後に）更新できるよう、要素参照を保持しておく
+  const bookEl = el('div', { class: 'jimoto-book' });
+  const isbnEl = el('div', { class: 'jimoto-isbn' });
+  const refreshBook = (loading = false) => {
+    if (loading) {
+      bookEl.textContent = '書誌を確認中…';
+      bookEl.classList.add('jimoto-muted');
+      isbnEl.textContent = `ISBN ${book.isbn13}`;
+      return;
+    }
+    bookEl.classList.remove('jimoto-muted');
+    bookEl.textContent = book.title || '(書名を取得できませんでした)';
+    isbnEl.textContent = `ISBN ${book.isbn13}${book.source === 'openbd' ? '' : '（書誌未確認）'}`;
+  };
+  refreshBook();
+
   const panel = el('div', { id: PANEL_ID, class: 'jimoto-panel' }, [
     el('div', { class: 'jimoto-title', text: '地元で買う' }),
-    el('div', { class: 'jimoto-book', text: book.title || '(書名を取得できませんでした)' }),
-    el('div', { class: 'jimoto-isbn', text: `ISBN ${book.isbn13}${book.source === 'openbd' ? '' : '（書誌未確認）'}` }),
+    bookEl,
+    isbnEl,
     el('div', { class: 'jimoto-row' }, [el('label', { class: 'jimoto-label', text: '注文先' }), routeSel]),
     fundingRow,
     el('div', { class: 'jimoto-row' }, [el('label', { class: 'jimoto-label', text: '冊数' }), qty]),
@@ -192,7 +232,7 @@ async function buildPanel(core, book) {
   ]);
 
   syncVisibility();
-  return panel;
+  return { panel, refreshBook };
 }
 
 function mount(panel) {
@@ -214,12 +254,20 @@ async function run() {
   const { isbn13, source } = core.extractIsbn({ url: location.href, text: pageText() });
   if (!isbn13) return; // 書籍ページでない、または ISBN を持たない商品
 
-  const fetched = await core.fetchBook(isbn13);
-  const book = core.mergeFallback(fetched, { isbn13, ...pageFallback() });
-  book.isbn13 = isbn13;
-  if (!fetched) book.source = `page:${source}`;
+  // openBD の応答（最大 8 秒）を待たずに、まず骨組みを表示する。
+  // book はボタンのハンドラと参照共有しているので、あとから中身を
+  // 書き換えれば、クリック時点では常に最新の書誌でメールが組まれる。
+  const book = { isbn13, source: 'loading' };
+  const { panel, refreshBook } = await buildPanel(core, book);
+  refreshBook(true);
+  mount(panel);
 
-  mount(await buildPanel(core, book));
+  const fetched = await core.fetchBook(isbn13);
+  const merged = core.mergeFallback(fetched, { isbn13, ...pageFallback() });
+  merged.isbn13 = isbn13;
+  if (!fetched) merged.source = `page:${source}`;
+  Object.assign(book, merged);
+  refreshBook();
 }
 
 let lastHref = '';

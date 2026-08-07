@@ -5,30 +5,72 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>地元で買う — ローカル版</title>
     <style>
-      :root { color-scheme: light dark; }
+      /* shadcn/ui (zinc) 風トークン。ローカル版は 1 ファイル完結を維持するためここに定義。
+         primary は既存ブランド色（ブルー）を維持。赤（--destructive）はエラー表示専用。 */
+      :root {
+        color-scheme: light dark;
+        --background: #fff;
+        --foreground: #09090b;
+        --card: #fff;
+        --border: #e4e4e7;
+        --input: #e4e4e7;
+        --primary: #1f6feb;
+        --primary-foreground: #fff;
+        --muted-foreground: #71717a;
+        --accent: #f4f4f5;
+        --destructive: #dc2626;
+        --ring: #1f6feb;
+        --radius: 0.5rem;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --background: #09090b;
+          --foreground: #fafafa;
+          --card: #09090b;
+          --border: #27272a;
+          --input: #27272a;
+          --muted-foreground: #a1a1aa;
+          --accent: #27272a;
+          --destructive: #ef4444;
+          --ring: #3b82f6;
+        }
+      }
       body {
         font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
         max-width: 800px; margin: 32px auto 80px; padding: 0 20px; line-height: 1.6;
+        background: var(--background); color: var(--foreground);
       }
       h1 { font-size: 20px; }
-      h2 { font-size: 15px; margin-top: 28px; border-bottom: 1px solid #8883; padding-bottom: 6px; }
-      p.hint { color: #6b7280; font-size: 13px; margin-top: -2px; }
+      h2 { font-size: 15px; margin-top: 28px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+      p.hint { color: var(--muted-foreground); font-size: 13px; margin-top: -2px; }
       label { display: block; margin-top: 10px; font-size: 13px; }
       input, select, textarea {
         width: 100%; padding: 7px 9px; margin-top: 3px; font: inherit; font-size: 14px;
-        border: 1px solid #8885; border-radius: 7px; background: transparent; color: inherit;
+        border: 1px solid var(--input); border-radius: 6px; background: var(--background); color: var(--foreground);
       }
       textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
       .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
       .row { display: flex; gap: 8px; align-items: flex-end; }
-      button { font: inherit; padding: 8px 16px; border-radius: 999px; border: 1px solid #8885; background: transparent; color: inherit; cursor: pointer; }
-      button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; font-weight: 600; }
-      .item { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid #8883; }
+      /* ボタン: 既定は outline、primary は塗り */
+      button {
+        font: inherit; font-weight: 500; height: 36px; padding: 0 16px;
+        border-radius: var(--radius); border: 1px solid var(--input);
+        background: var(--background); color: var(--foreground); cursor: pointer;
+      }
+      button:hover { background: var(--accent); }
+      button.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-foreground); }
+      button.primary:hover { background: #1a5fd0; border-color: #1a5fd0; }
+      /* キーボード操作時のみリングを出す */
+      button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible {
+        outline: 2px solid var(--ring); outline-offset: 2px;
+      }
+      .item { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); }
       .item .t { flex: 1; min-width: 0; }
       .item .t b { display: block; }
-      .item .t span { color: #6b7280; font-size: 12px; }
+      .item .t span { color: var(--muted-foreground); font-size: 12px; }
       .item input { width: 64px; }
-      .bad { color: #b91c1c; font-size: 13px; }
+      /* 赤はエラー専用色 */
+      .bad { color: var(--destructive); font-size: 13px; }
       details summary { cursor: pointer; font-size: 14px; font-weight: 600; margin-top: 24px; }
       .actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
     </style>

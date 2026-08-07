@@ -18,6 +18,38 @@ import { withDefaults, findFundingSource } from './profile.js';
 /** ブラウザ / OS のメーラー連携が安定して通る実測上の上限の目安 */
 export const MAILTO_SAFE_LENGTH = 2000;
 
+/**
+ * 宛先・件名・本文から mailto 関連の値だけを組み立てる純関数。
+ * composeOrder の内部でも使うが、UI 側で本文を手編集した後に
+ * mailto を組み直す用途（local 版の textarea 編集など）のために公開する。
+ * 長さ判定のロジックが二重実装にならないよう、必ずここを通すこと。
+ *
+ * @param {{to:string, cc?:string, subject?:string, body?:string}} args
+ */
+export function buildMailto({ to, cc = '', subject = '', body = '' }) {
+  const query = new URLSearchParams();
+  query.set('subject', subject);
+  query.set('body', body);
+  if (cc) query.set('cc', cc);
+  const mailto = `mailto:${encodeURIComponent(to)}?${query.toString()}`;
+
+  const headerQuery = new URLSearchParams();
+  headerQuery.set('subject', subject);
+  if (cc) headerQuery.set('cc', cc);
+  const mailtoHeaderOnly = `mailto:${encodeURIComponent(to)}?${headerQuery.toString()}`;
+
+  return {
+    /** 本文入り。長すぎる場合は使わない */
+    mailto,
+    /** 宛先と件名だけ。本文はクリップボードから貼ってもらう */
+    mailtoHeaderOnly,
+    encodedLength: mailto.length,
+    tooLongForMailto: mailto.length > MAILTO_SAFE_LENGTH,
+    /** そのまま送れる形式。クリップボード用 */
+    plain: `To: ${to}\nSubject: ${subject}\n\n${body}`,
+  };
+}
+
 function fill(tpl, vars) {
   return String(tpl).replace(/\{(\w+)\}/g, (_, k) => (vars[k] ?? ''));
 }
@@ -155,30 +187,12 @@ export function composeOrder({
     .join('\n')
     .replace(/\n{3,}/g, '\n\n');
 
-  const query = new URLSearchParams();
-  query.set('subject', subject);
-  query.set('body', body);
-  if (target.cc) query.set('cc', target.cc);
-  const mailto = `mailto:${encodeURIComponent(target.to)}?${query.toString()}`;
-
-  const headerQuery = new URLSearchParams();
-  headerQuery.set('subject', subject);
-  if (target.cc) headerQuery.set('cc', target.cc);
-  const mailtoHeaderOnly = `mailto:${encodeURIComponent(target.to)}?${headerQuery.toString()}`;
-
   return {
     to: target.to,
     cc: target.cc || '',
     subject,
     body,
-    /** 本文入り。長すぎる場合は使わない */
-    mailto,
-    /** 宛先と件名だけ。本文はクリップボードから貼ってもらう */
-    mailtoHeaderOnly,
-    encodedLength: mailto.length,
-    tooLongForMailto: mailto.length > MAILTO_SAFE_LENGTH,
-    /** そのまま送れる形式。クリップボード用 */
-    plain: `To: ${target.to}\nSubject: ${subject}\n\n${body}`,
+    ...buildMailto({ to: target.to, cc: target.cc || '', subject, body }),
     remarks: isCoop ? remarksLine(p, order) : '',
   };
 }

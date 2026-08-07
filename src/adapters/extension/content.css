@@ -1,13 +1,36 @@
+/*
+ * Amazon ページに注入するパネルのスタイル。
+ * shadcn/ui (zinc) のトークンを .jimoto- スコープ内に閉じて定義する。
+ * ページ側の CSS と干渉しないよう all: initial + 変数のローカル定義で自己完結させる。
+ * 注入先ページ（Amazon）は light 前提のため、ここは light 固定で良い。
+ */
+
+.jimoto-panel,
+.jimoto-toast {
+  --background: #fff;
+  --foreground: #09090b;
+  --card: #fff;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --primary: #1f6feb;
+  --primary-foreground: #fff;
+  --muted-foreground: #71717a;
+  --accent: #f4f4f5;
+  --destructive: #dc2626;
+  --ring: #1f6feb;
+  --radius: 0.5rem;
+}
+
 .jimoto-panel {
   all: initial;
   display: block;
   font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
   font-size: 13px;
   line-height: 1.5;
-  color: #1a1a1a;
-  background: #fff;
-  border: 1px solid #d5d9d9;
-  border-radius: 10px;
+  color: var(--foreground);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 12px;
   margin: 0 0 14px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
@@ -42,8 +65,14 @@
   overflow: hidden;
 }
 
+/* 「書誌を確認中…」などの一時表示 */
+.jimoto-muted {
+  color: var(--muted-foreground);
+  font-weight: 400;
+}
+
 .jimoto-isbn {
-  color: #6b7280;
+  color: var(--muted-foreground);
   font-size: 11px;
   margin-bottom: 10px;
 }
@@ -57,7 +86,7 @@
 
 .jimoto-label {
   width: 3.5em;
-  color: #4b5563;
+  color: var(--muted-foreground);
   flex: none;
 }
 
@@ -65,9 +94,10 @@
   flex: 1;
   min-width: 0;
   padding: 4px 6px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--input);
   border-radius: 6px;
-  background: #fff;
+  background: var(--background);
+  color: var(--foreground);
 }
 
 .jimoto-qty {
@@ -81,40 +111,58 @@
   margin-top: 8px;
 }
 
+/* ボタン: 既定は outline。primary は塗り、ghost は枠なし */
 .jimoto-btn {
   flex: 1;
-  padding: 7px 8px;
-  border: 1px solid #cbd5e1;
-  border-radius: 999px;
-  background: #f8fafc;
+  height: 36px;
+  padding: 0 8px;
+  font-weight: 500;
+  border: 1px solid var(--input);
+  border-radius: var(--radius);
+  background: var(--background);
+  color: var(--foreground);
   cursor: pointer;
 }
 
 .jimoto-btn:hover {
-  background: #eef2f7;
+  background: var(--accent);
 }
 
 .jimoto-primary {
-  background: #1f6feb;
-  border-color: #1f6feb;
-  color: #fff;
-  font-weight: 600;
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-foreground);
 }
 
 .jimoto-primary:hover {
   background: #1a5fd0;
+  border-color: #1a5fd0;
 }
 
 .jimoto-ghost {
+  border-color: transparent;
   background: transparent;
-  color: #4b5563;
+  color: var(--muted-foreground);
   font-size: 12px;
+}
+
+.jimoto-ghost:hover {
+  background: var(--accent);
+}
+
+/* キーボード操作時のみリングを出す */
+.jimoto-panel button:focus-visible,
+.jimoto-panel input:focus-visible,
+.jimoto-panel select:focus-visible,
+.jimoto-panel a:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 
 .jimoto-settings {
   display: inline-block;
   margin-top: 10px;
-  color: #6b7280;
+  color: var(--muted-foreground);
   font-size: 11px;
   text-decoration: underline;
   cursor: pointer;
@@ -129,8 +177,13 @@
   background: #111827;
   color: #fff;
   padding: 10px 16px;
-  border-radius: 999px;
+  border-radius: var(--radius);
   font-family: system-ui, sans-serif;
   font-size: 13px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+
+/* エラー通知のみ赤ボーダーで区別する（赤はエラー専用色。通常情報には使わない） */
+.jimoto-toast-error {
+  border-left: 4px solid var(--destructive);
 }

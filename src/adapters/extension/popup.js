@@ -6,30 +6,54 @@ const $ = (id) => document.getElementById(id);
 let profile;
 let cart = [];
 
+// 冊数の下限は 1。非数値・0 以下が composeOrder に流れ込むのを防ぐ
+function clampQty(v) {
+  const n = Math.floor(Number(v));
+  return Number.isFinite(n) && n >= 1 ? n : 1;
+}
+
 function renderCart() {
   const list = $('list');
-  list.innerHTML = '';
+  list.textContent = '';
   if (!cart.length) {
+    // 静的な文言のみ（変数補間なし）なので innerHTML で問題ない
     list.innerHTML = '<div class="empty">Amazon の書籍ページで「まとめる」を押すと<br />ここに溜まります</div>';
     return;
   }
   cart.forEach((item, i) => {
+    // 書名は Amazon 由来の文字列なので textContent で入れる（innerHTML 補間はしない）
     const row = document.createElement('div');
     row.className = 'item';
-    row.innerHTML = `
-      <div class="t">
-        <b>${(item.book.title || '(書名不明)').replace(/</g, '&lt;')}</b>
-        <span>${item.book.isbn13}</span>
-      </div>
-      <input type="number" min="1" value="${item.quantity ?? 1}" />
-      <button title="削除">×</button>`;
-    row.querySelector('input').addEventListener('input', (e) => {
-      cart[i].quantity = Number(e.target.value) || 1;
+
+    const t = document.createElement('div');
+    t.className = 't';
+    const title = document.createElement('b');
+    title.textContent = item.book.title || '(書名不明)';
+    const isbn = document.createElement('span');
+    isbn.textContent = item.book.isbn13;
+    t.append(title, isbn);
+
+    const qty = document.createElement('input');
+    qty.type = 'number';
+    qty.min = '1';
+    qty.inputMode = 'numeric';
+    qty.value = String(item.quantity ?? 1);
+    qty.addEventListener('input', () => {
+      cart[i].quantity = clampQty(qty.value);
     });
-    row.querySelector('button').addEventListener('click', async () => {
+    qty.addEventListener('change', () => {
+      qty.value = String(clampQty(qty.value));
+    });
+
+    const del = document.createElement('button');
+    del.title = '削除';
+    del.textContent = '×';
+    del.addEventListener('click', async () => {
       cart = await removeFromCart(item.book.isbn13);
       renderCart();
     });
+
+    row.append(t, qty, del);
     list.append(row);
   });
 }
@@ -54,17 +78,26 @@ async function init() {
   profile = withDefaults(await loadProfile());
   cart = await loadCart();
 
-  $('route').innerHTML = `
-    <option value="coop">${profile.coop.label}</option>
-    <option value="bookstore">${profile.bookstore.storeName || profile.bookstore.label}</option>`;
-  $('route').value = profile.defaults.route;
+  // option のラベルはユーザー設定由来の文字列なので new Option で生成する
+  const route = $('route');
+  route.textContent = '';
+  route.append(
+    new Option(profile.coop.label, 'coop'),
+    new Option(profile.bookstore.storeName || profile.bookstore.label, 'bookstore')
+  );
+  route.value = profile.defaults.route;
   $('funding').value = profile.defaults.fundingMode;
-  $('source').innerHTML = profile.fundingSources.length
-    ? profile.fundingSources
-        .map((s) => `<option value="${s.id}">${s.label}${s.code ? ` (${s.code})` : ''}</option>`)
-        .join('')
-    : '<option value="">財源未登録</option>';
-  $('source').value = profile.defaults.fundingSourceId || profile.fundingSources[0]?.id || '';
+
+  const source = $('source');
+  source.textContent = '';
+  if (profile.fundingSources.length) {
+    for (const s of profile.fundingSources) {
+      source.append(new Option(`${s.label}${s.code ? ` (${s.code})` : ''}`, s.id));
+    }
+  } else {
+    source.append(new Option('財源未登録', ''));
+  }
+  source.value = profile.defaults.fundingSourceId || profile.fundingSources[0]?.id || '';
 
   renderCart();
   syncVisibility();
@@ -76,7 +109,12 @@ $('funding').addEventListener('change', syncVisibility);
 $('mail').addEventListener('click', async () => {
   if (!cart.length) return;
   const missing = validate(profile, $('route').value);
-  if (missing.length) return chrome.runtime.openOptionsPage();
+  if (missing.length) {
+    // 黙って設定画面へ飛ばすと何が起きたか分からないため、まず理由を見せてから開く
+    $('status').textContent = `設定が未入力です: ${missing.join(' / ')}`;
+    setTimeout(() => chrome.runtime.openOptionsPage(), 600);
+    return;
+  }
   const d = draft();
   if (d.tooLongForMailto) {
     // tabs.create で popup が閉じるため、コピー完了を待ってから開く

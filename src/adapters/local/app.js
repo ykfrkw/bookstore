@@ -5,7 +5,7 @@
 import { extractIsbn, toIsbn13 } from '../../core/isbn.js';
 import { fetchBook, mergeFallback } from '../../core/bibliography.js';
 import { withDefaults, validate } from '../../core/profile.js';
-import { composeOrder } from '../../core/compose.js';
+import { composeOrder, buildMailto } from '../../core/compose.js';
 import { loadProfile, saveProfile } from '../../core/storage.js';
 
 const $ = (id) => document.getElementById(id);
@@ -20,24 +20,36 @@ const set = (o, p, v) => {
   ks.reduce((x, k) => (x[k] ??= {}), o)[last] = v;
 };
 
+// 冊数の下限は 1。非数値・0 以下が composeOrder に流れ込むのを防ぐ
+const clampQty = (v) => {
+  const n = Math.floor(Number(v));
+  return Number.isFinite(n) && n >= 1 ? n : 1;
+};
+
 function renderList() {
   const list = $('list');
   list.innerHTML = '';
   items.forEach((item, i) => {
     const row = document.createElement('div');
     row.className = 'item';
+    // 静的テンプレートのみ（変数補間なし）。値は下で property 経由で入れる
     row.innerHTML = `
       <div class="t">
         <b></b>
         <span></span>
       </div>
-      <input type="number" min="1" value="${item.quantity}" />
+      <input type="number" min="1" inputmode="numeric" />
       <button>削除</button>`;
     row.querySelector('b').textContent = item.book.title || '(書名不明)';
     row.querySelector('span').textContent =
       [item.book.author, item.book.publisher, item.book.isbn13].filter(Boolean).join(' / ');
-    row.querySelector('input').addEventListener('input', (e) => {
-      items[i].quantity = Number(e.target.value) || 1;
+    const qty = row.querySelector('input');
+    qty.value = String(item.quantity ?? 1);
+    qty.addEventListener('input', () => {
+      items[i].quantity = clampQty(qty.value);
+    });
+    qty.addEventListener('change', () => {
+      qty.value = String(clampQty(qty.value));
     });
     row.querySelector('button').addEventListener('click', () => {
       items.splice(i, 1);
@@ -98,12 +110,17 @@ function compose() {
 }
 
 function renderSourceOptions() {
-  $('source').innerHTML = profile.fundingSources.length
-    ? profile.fundingSources
-        .map((s) => `<option value="${s.id}">${s.label}${s.code ? ` (${s.code})` : ''}</option>`)
-        .join('')
-    : '<option value="">財源未登録</option>';
-  $('source').value = profile.defaults.fundingSourceId || profile.fundingSources[0]?.id || '';
+  // ラベルはユーザー設定由来の文字列なので new Option で生成する（innerHTML 補間はしない）
+  const source = $('source');
+  source.textContent = '';
+  if (profile.fundingSources.length) {
+    for (const s of profile.fundingSources) {
+      source.append(new Option(`${s.label}${s.code ? ` (${s.code})` : ''}`, s.id));
+    }
+  } else {
+    source.append(new Option('財源未登録', ''));
+  }
+  source.value = profile.defaults.fundingSourceId || profile.fundingSources[0]?.id || '';
 }
 
 async function init() {
@@ -132,8 +149,20 @@ $('route').addEventListener('change', syncVisibility);
 $('funding').addEventListener('change', syncVisibility);
 $('compose').addEventListener('click', compose);
 
-$('mailto').addEventListener('click', async () => {
+/**
+ * 「コピー」「メーラーで開く」用の下書き。
+ * 本文 textarea はユーザーが手で直せるので、lastDraft の本文ではなく
+ * 押下時点の #out-body の値で mailto / plain を組み直す（編集を無視しない）。
+ */
+function currentDraft() {
   const d = lastDraft || compose();
+  if (!d) return null;
+  const body = $('out-body').value;
+  return { ...d, body, ...buildMailto({ to: d.to, cc: d.cc, subject: d.subject, body }) };
+}
+
+$('mailto').addEventListener('click', async () => {
+  const d = currentDraft();
   if (!d) return;
   if (d.tooLongForMailto) {
     await navigator.clipboard.writeText(d.body);
@@ -146,7 +175,7 @@ $('mailto').addEventListener('click', async () => {
 });
 
 $('copy').addEventListener('click', async () => {
-  const d = lastDraft || compose();
+  const d = currentDraft();
   if (!d) return;
   await navigator.clipboard.writeText(d.plain);
 });

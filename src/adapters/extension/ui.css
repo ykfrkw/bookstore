@@ -1,0 +1,99 @@
+/*
+ * popup / options 共通のデザイントークンとコンポーネント様式。
+ * shadcn/ui (zinc) の配色をビルドレスの素 CSS で再現する。
+ * primary は既存のブランド色（ブルー #1f6feb）を維持。
+ * 赤（--destructive）はエラー・破壊的操作の表示専用。通常情報に使わない。
+ */
+
+:root {
+  --background: #fff;
+  --foreground: #09090b;
+  --card: #fff;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --primary: #1f6feb;
+  --primary-foreground: #fff;
+  --muted-foreground: #71717a;
+  --accent: #f4f4f5;
+  --destructive: #dc2626;
+  --ring: #1f6feb;
+  --radius: 0.5rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #09090b;
+    --foreground: #fafafa;
+    --card: #09090b;
+    --border: #27272a;
+    --input: #27272a;
+    --muted-foreground: #a1a1aa;
+    --accent: #27272a;
+    --destructive: #ef4444;
+    --ring: #3b82f6;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* ボタン: 既定は outline。primary は塗り、ghost は枠なし */
+button {
+  font: inherit;
+  font-weight: 500;
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--input);
+  border-radius: var(--radius);
+  background: var(--background);
+  color: var(--foreground);
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--accent);
+}
+
+button.primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+}
+
+button.primary:hover {
+  background: #1a5fd0;
+  border-color: #1a5fd0;
+}
+
+button.ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted-foreground);
+}
+
+button.ghost:hover {
+  background: var(--accent);
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  border: 1px solid var(--input);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* キーボード操作時のみリングを出す（マウス操作では出さない） */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
