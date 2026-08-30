@@ -158,8 +158,13 @@ $('save').addEventListener('click', async () => {
   if (!p.defaults.fundingSourceId && p.fundingSources[0]) {
     p.defaults.fundingSourceId = p.fundingSources[0].id;
   }
-  // 名前も宛先も空の行は保存しない（追加ボタンの押し間違いを残さない）
-  p.destinations = destinations.filter((d) => d.label || d.to);
+  // 名前も宛先も空の行は保存しない（追加ボタンの押し間違いを残さない）。
+  // 浅コピーするのは、destinations の要素が renderDestinations の input
+  // ハンドラに書き換えられ続けるオブジェクトだから。そのまま代入すると
+  // 保存後のプロフィールが編集中の値をエイリアスする。この画面は保存後に
+  // 注文を組まないので実害は出ないが、同じ書き方をローカル版に残した結果
+  // 「未保存の宛先が下書きに載る」事故になったので、こちらも揃える
+  p.destinations = destinations.filter((d) => d.label || d.to).map((d) => ({ ...d }));
   const selectedDest = $('def-dest').value;
   p.defaults.destinationId = p.destinations.some((d) => d.id === selectedDest)
     ? selectedDest

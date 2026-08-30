@@ -105,9 +105,14 @@ function renderDefaultDest(selected) {
 
 async function save() {
   document.querySelectorAll('[data-p]').forEach((n) => set(profile, n.dataset.p, n.value));
-  // 名前も宛先も空の行は保存しない（追加ボタンの押し間違いを残さない）
-  profile.destinations = destinations.filter((d) => d.label || d.to);
-  profile.fundingSources = sources.filter((s) => s.label || s.code);
+  // 名前も宛先も空の行は保存しない（追加ボタンの押し間違いを残さない）。
+  // 浅コピーは必須。destinations / sources の要素は renderCards の input
+  // ハンドラがフォーム入力のたびに書き換え続けるオブジェクトなので、
+  // そのまま代入すると profile が編集中の値をエイリアスする。すると
+  // 「保存 → 保存せずにフォームを触る → 注文メールを作る」で未保存の値が
+  // 下書きに載る（to / cc / memberNumber は注文画面に出ないので気づけない）
+  profile.destinations = destinations.filter((d) => d.label || d.to).map((d) => ({ ...d }));
+  profile.fundingSources = sources.filter((s) => s.label || s.code).map((s) => ({ ...s }));
   const selectedDest = $('def-dest').value;
   profile.defaults.destinationId = profile.destinations.some((d) => d.id === selectedDest)
     ? selectedDest

@@ -29,6 +29,15 @@ const legacyProfile = {
   defaults: { route: 'bookstore', fundingMode: 'private' },
 };
 
+/**
+ * 旧 options は withDefaults() の出力をそのまま保存していたため、片方しか
+ * 使っていなくても もう片方の枠が「既定ラベルのまま・宛先メール空」で
+ * 保存されている。これを宛先として拾うと幽霊宛先が生える。
+ * 旧既定ラベルは coop: '大学生協 書籍部' / bookstore: '地元書店'。
+ */
+const LEGACY_DEFAULT_COOP_LABEL = '大学生協 書籍部';
+const LEGACY_DEFAULT_BOOKSTORE_LABEL = '地元書店';
+
 test('旧プロフィールは destinations 2 件に移行される', () => {
   const p = withDefaults(legacyProfile);
   assert.equal(p.destinations.length, 2);
@@ -65,6 +74,80 @@ test('空の旧プロフィールからは宛先が生成されない', () => {
   // 既定値のまま中身が空の枠も宛先にしない
   const blank = { coop: { label: '', to: '', storeName: '' }, bookstore: { to: '' } };
   assert.deepEqual(withDefaults(blank).destinations, []);
+});
+
+test('書店だけ設定済みなら、既定ラベルのままの生協は宛先にしない', () => {
+  const savedByBookstoreUser = {
+    requester: legacyProfile.requester,
+    // 触っていない枠。旧 options が既定値をそのまま書き戻したもの
+    coop: {
+      label: LEGACY_DEFAULT_COOP_LABEL,
+      to: '',
+      cc: '',
+      receiveMethod: '研究室へ配達',
+      storeName: '',
+      memberNumber: '',
+    },
+    bookstore: {
+      label: LEGACY_DEFAULT_BOOKSTORE_LABEL,
+      to: 'order@bookstore.example.jp',
+      receiveMethod: '店頭受取',
+      storeName: '△△書店',
+      customerNumber: '999',
+    },
+    defaults: { route: 'bookstore' },
+  };
+  const p = withDefaults(savedByBookstoreUser);
+  assert.equal(p.destinations.length, 1);
+  assert.equal(p.destinations[0].id, 'bookstore');
+  assert.equal(p.destinations[0].kind, 'bookstore');
+  assert.equal(p.destinations[0].label, '△△書店');
+  assert.equal(p.defaults.destinationId, 'bookstore');
+});
+
+test('生協だけ設定済みなら、既定ラベルのままの書店は宛先にしない', () => {
+  const savedByCoopUser = {
+    requester: legacyProfile.requester,
+    coop: {
+      label: '○○大学生協 書籍部',
+      to: 'book@coop.example.ac.jp',
+      receiveMethod: '研究室へ配達',
+      storeName: '',
+      memberNumber: '12345',
+    },
+    // 旧 options には書店の label 入力欄が無く、既定値のまま保存されていた
+    bookstore: {
+      label: LEGACY_DEFAULT_BOOKSTORE_LABEL,
+      to: '',
+      receiveMethod: '店頭受取',
+      storeName: '',
+      customerNumber: '',
+    },
+    defaults: { route: 'coop' },
+  };
+  const p = withDefaults(savedByCoopUser);
+  assert.equal(p.destinations.length, 1);
+  assert.equal(p.destinations[0].id, 'coop');
+  assert.equal(p.destinations[0].kind, 'coop');
+  assert.equal(p.destinations[0].label, '○○大学生協 書籍部');
+  assert.equal(p.defaults.destinationId, 'coop');
+});
+
+test('ラベルを自分で書き換えていれば、宛先メールが空でも宛先を作る', () => {
+  const savedWithCustomLabel = {
+    requester: legacyProfile.requester,
+    // 宛先アドレスがまだ分からず、名前だけ入れて保存した状態。情報を失わない
+    coop: { label: '□□大学生協 中央書籍部', to: '', storeName: '' },
+    bookstore: { label: LEGACY_DEFAULT_BOOKSTORE_LABEL, to: '', storeName: '' },
+    defaults: { route: 'coop' },
+  };
+  const p = withDefaults(savedWithCustomLabel);
+  assert.equal(p.destinations.length, 1);
+  assert.equal(p.destinations[0].id, 'coop');
+  assert.equal(p.destinations[0].label, '□□大学生協 中央書籍部');
+  assert.equal(p.defaults.destinationId, 'coop');
+  // 宛先メールが空なことは validate 側で気づける
+  assert.deepEqual(validate(p, 'coop'), ['宛先メール']);
 });
 
 test('destinations があれば旧キーからは変換しない', () => {

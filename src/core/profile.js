@@ -25,6 +25,15 @@ export const DESTINATION_KINDS = [
 /** 種別ごとの既定の受取方法。新規追加時と旧設定の移行時の両方で使う */
 const DEFAULT_RECEIVE_METHOD = { coop: '研究室へ配達', bookstore: '店頭受取' };
 
+/**
+ * 旧スキーマ（v0.2 まで）の coop.label / bookstore.label の既定値。
+ * どちらも非空で、旧 options は withDefaults() の出力をそのまま保存していたため、
+ * 「生協しか設定していない人の bookstore.label」も既定値のまま残っている。
+ * 移行時にこの値を「ユーザーが入力した中身」と見なすと幽霊宛先が生える。
+ * 旧 options には書店の label 入力欄すら無かったので、この値＝未入力の印。
+ */
+const LEGACY_DEFAULT_LABELS = { coop: '大学生協 書籍部', bookstore: '地元書店' };
+
 export const DEFAULT_PROFILE = {
   requester: {
     name: '',
@@ -97,8 +106,16 @@ export function destinationLabel(destination) {
 function migrateDestinations(saved) {
   const list = [];
   const add = (kind, legacy, label, memberNumber) => {
-    // 中身が 1 つも無い（=既定値のまま触られていない）枠は宛先として作らない
-    if (!legacy || !(legacy.to || legacy.storeName || legacy.label)) return;
+    if (!legacy) return;
+    // 中身が 1 つも無い（=既定値のまま触られていない）枠は宛先として作らない。
+    // label が非空でも「設定済み」とは見なせない。旧既定ラベルが非空だったため、
+    // 生協しか使っていない人にも bookstore.label が '地元書店' のまま保存されており、
+    // それを拾うと宛先メール空の幽霊宛先が生える（保存時のフィルタも通過してしまう）。
+    // 自分でラベルを書き換えていた人の情報は失いたくないので、既定ラベルと
+    // 一致しないときだけ「設定済み」と見なす
+    const hasContent = Boolean(legacy.to || legacy.storeName);
+    const hasCustomLabel = Boolean(legacy.label) && legacy.label !== LEGACY_DEFAULT_LABELS[kind];
+    if (!hasContent && !hasCustomLabel) return;
     list.push({
       id: kind,
       kind,

@@ -132,6 +132,9 @@ async function injectPanelStyle(shadow) {
   try {
     if (panelCssText === null) {
       const res = await fetch(url(PANEL_CSS_PATH));
+      // 非 OK のボディ（や空文字）を panelCssText に恒久キャッシュすると、
+      // 以降ずっと無スタイルのままになる。catch に流して次回やり直させる
+      if (!res.ok) throw new Error(`CSS ${res.status}`);
       panelCssText = await res.text();
     }
     shadow.prepend(el('style', { text: panelCssText }));
