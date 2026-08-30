@@ -85,6 +85,14 @@ npm run build     # dist/bookstore-<version>.zip を作る
 - **MV3 の content script は ESM ではない。** `chrome.runtime.getURL` +
   動的 `import()` で core を読んでいる。`web_accessible_resources` に
   `core/*.js` を入れ忘れると黙って失敗する。
+- **`chrome.runtime.openOptionsPage` は content script では `undefined`。**
+  拡張ページ（popup / options / background）専用の API。`?.()` で呼ぶと例外も
+  出さず静かに no-op するため、原因に気づくまでが長い。設定画面は
+  `background.js` へ `sendMessage`（`'jimoto:open-options'`）して開くこと。
+  `options.html` を `web_accessible_resources` に足す方法は、ホストページへの
+  露出面を増やすので採らない。MV3 の service worker は ephemeral で
+  「Receiving end does not exist」が返りうるので、`chrome.runtime.lastError` を
+  必ず読んで失敗を利用者に見せる。
 - **`file://` ではローカル版が動かない。** ES module が CORS で弾かれるため、
   必ず `npm run local`（http 経由）で開く。
 
