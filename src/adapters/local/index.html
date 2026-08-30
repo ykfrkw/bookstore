@@ -71,6 +71,11 @@
       .item input { width: 64px; }
       /* 赤はエラー専用色 */
       .bad { color: var(--destructive); font-size: 13px; }
+      /* 宛先・財源は 1 件 = 1 カード（拡張の設定画面と同じ見た目に揃える） */
+      .card {
+        border: 1px solid var(--border); border-radius: var(--radius); background: var(--card);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05); padding: 10px 14px 16px; margin-top: 12px;
+      }
       details summary { cursor: pointer; font-size: 14px; font-weight: 600; margin-top: 24px; }
       .actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
     </style>
@@ -96,7 +101,7 @@
 
     <h2>2. 注文先</h2>
     <div class="grid">
-      <label>ルート<select id="route"><option value="coop">大学生協</option><option value="bookstore">地元書店</option></select></label>
+      <label>注文先<select id="dest"></select></label>
       <label>支払区分<select id="funding"><option value="research">研究費</option><option value="private">私費</option></select></label>
     </div>
     <label id="source-wrap">財源<select id="source"></select></label>
@@ -125,28 +130,27 @@
       </div>
       <label>配達場所<input data-p="requester.deliveryPlace" /></label>
 
-      <h2>大学生協</h2>
-      <div class="grid">
-        <label>表示名<input data-p="coop.label" /></label>
-        <label>受取店舗<input data-p="coop.storeName" /></label>
-      </div>
-      <div class="grid">
-        <label>宛先メール<input data-p="coop.to" /></label>
-        <label>受取方法<input data-p="coop.receiveMethod" /></label>
-      </div>
+      <h2>宛先</h2>
+      <p class="hint">
+        生協・書店をまとめて何件でも登録できます。生協を選んだときだけ研究費・財源の指定が出ます。
+      </p>
+      <div id="destinations"></div>
+      <div class="actions"><button id="add-dest" type="button">宛先を追加</button></div>
 
-      <h2>地元書店</h2>
-      <div class="grid">
-        <label>店名<input data-p="bookstore.storeName" /></label>
-        <label>宛先メール<input data-p="bookstore.to" /></label>
-      </div>
+      <h2>研究費の財源</h2>
+      <div id="fs-list"></div>
+      <div class="actions"><button id="add-fs" type="button">財源を追加</button></div>
 
-      <h2>研究費の財源（1件のみ簡易編集）</h2>
+      <h2>既定値</h2>
       <div class="grid">
-        <label>名称<input id="fs-label" placeholder="科研費 基盤(C)" /></label>
-        <label>課題番号<input id="fs-code" /></label>
+        <label>既定の宛先<select id="def-dest"></select></label>
+        <label>既定の支払区分
+          <select id="def-funding">
+            <option value="research">研究費</option>
+            <option value="private">私費</option>
+          </select>
+        </label>
       </div>
-      <label>予算代表者<input id="fs-rep" /></label>
 
       <div class="actions"><button class="primary" id="save">設定を保存</button><span id="saved"></span></div>
     </details>

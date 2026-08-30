@@ -16,5 +16,12 @@ Thumbs.db
 node_modules/
 dist/
 
+# Chrome の「拡張機能をパッケージ化」が吐く成果物。
+# 対になる *.pem（署名用の秘密鍵）は上のセキュリティ節で除外済み
+*.crx
+
+# Claude Code のローカル設定と作業用 worktree
+.claude/
+
 # extension/core は sync-core.mjs の生成物（src/core が正）
 src/adapters/extension/core/

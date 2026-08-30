@@ -22,8 +22,13 @@ const files = (await readdir(ext)).filter(
 const coreFiles = (await readdir(join(ext, 'core')))
   .filter((f) => f.endsWith('.js'))
   .map((f) => `core/${f}`);
+const iconFiles = (await readdir(join(ext, 'icons')))
+  .filter((f) => f.endsWith('.png'))
+  .map((f) => `icons/${f}`);
+
+const packed = [...files, ...coreFiles, ...iconFiles];
 
 await rm(out, { force: true });
 await mkdir(dist, { recursive: true });
-execFileSync('zip', ['-q', out, ...files, ...coreFiles], { cwd: ext });
-console.log(`[pack] ${out} (${files.length + coreFiles.length} files)`);
+execFileSync('zip', ['-q', out, ...packed], { cwd: ext });
+console.log(`[pack] ${out} (${packed.length} files)`);

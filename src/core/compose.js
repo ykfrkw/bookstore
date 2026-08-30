@@ -1,5 +1,5 @@
 /**
- * 注文メールの生成。生協ルート / 地元書店ルートの両方をここで組み立てる。
+ * 注文メールの生成。宛先（destinations の 1 件）の種別に応じて文面を出し分ける。
  *
  * 設計方針:
  *  - 自動発注はしない。人が最終確認して送るための「下書き」を作るだけ。
@@ -13,7 +13,7 @@
  */
 
 import { display as displayIsbn } from './isbn.js';
-import { withDefaults, findFundingSource } from './profile.js';
+import { withDefaults, findFundingSource, findDestination } from './profile.js';
 
 /** ブラウザ / OS のメーラー連携が安定して通る実測上の上限の目安 */
 export const MAILTO_SAFE_LENGTH = 2000;
@@ -108,7 +108,7 @@ function totals(items) {
 
 /**
  * @param {object} args
- * @param {'coop'|'bookstore'} args.route
+ * @param {string} args.destinationId profile.destinations の id
  * @param {Array<{book:object, quantity?:number, note?:string}>} args.items
  * @param {object} args.profile
  * @param {'research'|'private'} [args.fundingMode]
@@ -116,7 +116,7 @@ function totals(items) {
  * @param {string} [args.message] 末尾に添える自由記述
  */
 export function composeOrder({
-  route,
+  destinationId,
   items,
   profile,
   fundingMode = 'research',
@@ -124,8 +124,13 @@ export function composeOrder({
   message = '',
 }) {
   const p = withDefaults(profile);
-  const isCoop = route !== 'bookstore';
-  const target = isCoop ? p.coop : p.bookstore;
+  // 宛先未登録でも例外は投げない。総関数のままにしておき、止めるのは UI 側の validate
+  const dest = findDestination(p, destinationId);
+  const isCoop = dest?.kind === 'coop';
+  const to = dest?.to || '';
+  const cc = dest?.cc || '';
+  const receiveMethod = dest?.receiveMethod || '';
+  const storeName = dest?.storeName || '';
   const order = { fundingMode, fundingSourceId };
   const { count, amount, partial } = totals(items);
 
@@ -133,7 +138,7 @@ export function composeOrder({
     name: p.requester.name || '',
     count: String(items.length),
     funding: isCoop ? fundingLabel(p, order) : '',
-    orgLabel: target.storeName || target.label,
+    orgLabel: dest?.label || '',
   };
 
   const subject = fill(
@@ -146,15 +151,15 @@ export function composeOrder({
     isCoop &&
       fundingMode === 'research' &&
       `■ 予算代表者: ${findFundingSource(p, fundingSourceId)?.representative || p.requester.name}`,
-    `■ 受取方法: ${target.receiveMethod}`,
-    target.storeName && `■ 受取店舗: ${target.storeName}`,
-    p.requester.deliveryPlace && target.receiveMethod.includes('配達')
+    receiveMethod && `■ 受取方法: ${receiveMethod}`,
+    storeName && `■ 受取店舗: ${storeName}`,
+    p.requester.deliveryPlace && receiveMethod.includes('配達')
       ? `■ 配達場所: ${p.requester.deliveryPlace}`
       : '',
     `■ 所属: ${p.requester.affiliation}`,
     `■ 氏名: ${p.requester.name}${p.requester.kana ? `（${p.requester.kana}）` : ''}`,
-    isCoop && target.memberNumber && `■ 組合員番号: ${target.memberNumber}`,
-    !isCoop && target.customerNumber && `■ 会員番号: ${target.customerNumber}`,
+    // 呼び名だけ種別で出し分ける（生協は組合員番号、書店は会員番号）
+    dest?.memberNumber && `■ ${isCoop ? '組合員番号' : '会員番号'}: ${dest.memberNumber}`,
     `■ 連絡先: ${[p.requester.email, p.requester.phone].filter(Boolean).join(' / ')}`,
   ]
     .filter(Boolean)
@@ -188,11 +193,11 @@ export function composeOrder({
     .replace(/\n{3,}/g, '\n\n');
 
   return {
-    to: target.to,
-    cc: target.cc || '',
+    to,
+    cc,
     subject,
     body,
-    ...buildMailto({ to: target.to, cc: target.cc || '', subject, body }),
+    ...buildMailto({ to, cc, subject, body }),
     remarks: isCoop ? remarksLine(p, order) : '',
   };
 }

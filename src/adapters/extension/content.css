@@ -42,6 +42,16 @@
   box-sizing: border-box;
 }
 
+/*
+ * パネル本体は closed shadow root の中にあり、light DOM 側にはこのホストしか
+ * 無い。ページ側の CSS（Amazon の子要素セレクタ等）に巻き込まれて inline や
+ * flex item 扱いにされないよう、display だけは明示しておく。
+ * それ以外は指定しない — .jimoto-floating が position/width を上書きするため。
+ */
+.jimoto-host {
+  display: block;
+}
+
 .jimoto-floating {
   position: fixed;
   right: 16px;

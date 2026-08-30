@@ -4,21 +4,15 @@
  */
 import { extractIsbn, toIsbn13 } from '../../core/isbn.js';
 import { fetchBook, mergeFallback } from '../../core/bibliography.js';
-import { withDefaults, validate } from '../../core/profile.js';
+import { withDefaults, validate, findDestination, destinationLabel } from '../../core/profile.js';
 import { composeOrder, buildMailto } from '../../core/compose.js';
-import { loadProfile, saveProfile } from '../../core/storage.js';
+import { loadProfile } from '../../core/storage.js';
+import { initSettings } from './settings.js';
 
 const $ = (id) => document.getElementById(id);
 let profile;
 let items = [];
 let lastDraft = null;
-
-const get = (o, p) => p.split('.').reduce((x, k) => x?.[k], o);
-const set = (o, p, v) => {
-  const ks = p.split('.');
-  const last = ks.pop();
-  ks.reduce((x, k) => (x[k] ??= {}), o)[last] = v;
-};
 
 // 冊数の下限は 1。非数値・0 以下が composeOrder に流れ込むのを防ぐ
 const clampQty = (v) => {
@@ -80,13 +74,14 @@ async function lookup() {
 }
 
 function syncVisibility() {
-  const isCoop = $('route').value === 'coop';
+  // 研究費・財源は生協の宛先でしか意味がない
+  const isCoop = findDestination(profile, $('dest').value)?.kind === 'coop';
   $('funding').closest('label').style.display = isCoop ? '' : 'none';
   $('source-wrap').style.display = isCoop && $('funding').value === 'research' ? '' : 'none';
 }
 
 function compose() {
-  const missing = validate(profile, $('route').value);
+  const missing = validate(profile, $('dest').value);
   if (missing.length) {
     $('errors').textContent = `設定が未入力です: ${missing.join(' / ')}`;
     return null;
@@ -97,7 +92,7 @@ function compose() {
   }
   $('errors').textContent = '';
   lastDraft = composeOrder({
-    route: $('route').value,
+    destinationId: $('dest').value,
     items,
     profile,
     fundingMode: $('funding').value,
@@ -109,9 +104,24 @@ function compose() {
   return lastDraft;
 }
 
-function renderSourceOptions() {
-  // ラベルはユーザー設定由来の文字列なので new Option で生成する（innerHTML 補間はしない）
+// ラベルはユーザー設定由来の文字列なので new Option で生成する（innerHTML 補間はしない）
+function renderOrderOptions() {
+  const dest = $('dest');
+  // 設定を保存した直後にも呼ばれる。選択中の宛先が残っているならそれを維持する
+  const keptDest = dest.value;
+  dest.textContent = '';
+  if (profile.destinations.length) {
+    for (const d of profile.destinations) dest.append(new Option(destinationLabel(d), d.id));
+  } else {
+    dest.append(new Option('宛先未登録 — 設定から追加', ''));
+  }
+  dest.value = keptDest || profile.defaults.destinationId;
+  // 選択中・既定の宛先が消えている場合に「何も選ばれていない」状態にしない
+  if (!dest.value) dest.value = profile.defaults.destinationId;
+  if (!dest.value) dest.selectedIndex = 0;
+
   const source = $('source');
+  const keptSource = source.value;
   source.textContent = '';
   if (profile.fundingSources.length) {
     for (const s of profile.fundingSources) {
@@ -120,22 +130,20 @@ function renderSourceOptions() {
   } else {
     source.append(new Option('財源未登録', ''));
   }
-  source.value = profile.defaults.fundingSourceId || profile.fundingSources[0]?.id || '';
+  source.value = keptSource || profile.defaults.fundingSourceId;
+  if (!source.value) source.selectedIndex = 0;
 }
 
 async function init() {
   profile = withDefaults(await loadProfile());
-  document.querySelectorAll('[data-p]').forEach((n) => (n.value = get(profile, n.dataset.p) ?? ''));
-  const fs = profile.fundingSources[0];
-  if (fs) {
-    $('fs-label').value = fs.label || '';
-    $('fs-code').value = fs.code || '';
-    $('fs-rep').value = fs.representative || '';
-  }
-  $('route').value = profile.defaults.route;
+  renderOrderOptions();
   $('funding').value = profile.defaults.fundingMode;
-  renderSourceOptions();
   syncVisibility();
+  // 設定が保存されたら、注文側のセレクトを作り直して表示名のズレを残さない
+  initSettings(profile, () => {
+    renderOrderOptions();
+    syncVisibility();
+  });
 }
 
 $('lookup').addEventListener('click', lookup);
@@ -145,7 +153,7 @@ $('clear').addEventListener('click', () => {
   $('errors').textContent = '';
   renderList();
 });
-$('route').addEventListener('change', syncVisibility);
+$('dest').addEventListener('change', syncVisibility);
 $('funding').addEventListener('change', syncVisibility);
 $('compose').addEventListener('click', compose);
 
@@ -184,21 +192,6 @@ $('copy-remarks').addEventListener('click', async () => {
   const d = lastDraft || compose();
   if (!d?.remarks) return;
   await navigator.clipboard.writeText(d.remarks);
-});
-
-$('save').addEventListener('click', async () => {
-  document.querySelectorAll('[data-p]').forEach((n) => set(profile, n.dataset.p, n.value));
-  const label = $('fs-label').value;
-  profile.fundingSources = label
-    ? [{ id: 'primary', label, code: $('fs-code').value, representative: $('fs-rep').value }]
-    : [];
-  profile.defaults.route = $('route').value;
-  profile.defaults.fundingMode = $('funding').value;
-  profile.defaults.fundingSourceId = profile.fundingSources[0]?.id || '';
-  await saveProfile(profile);
-  renderSourceOptions();
-  $('saved').textContent = '保存しました';
-  setTimeout(() => ($('saved').textContent = ''), 2000);
 });
 
 init();
