@@ -1,4 +1,4 @@
-import { withDefaults, validate } from './core/profile.js';
+import { withDefaults, validate, findDestination, destinationLabel } from './core/profile.js';
 import { composeOrder } from './core/compose.js';
 import { loadProfile, loadCart, removeFromCart, clearCart } from './core/storage.js';
 
@@ -17,7 +17,7 @@ function renderCart() {
   list.textContent = '';
   if (!cart.length) {
     // 静的な文言のみ（変数補間なし）なので innerHTML で問題ない
-    list.innerHTML = '<div class="empty">Amazon の書籍ページで「まとめる」を押すと<br />ここに溜まります</div>';
+    list.innerHTML = '<div class="empty">書籍ページで「まとめる」を押すと<br />ここに溜まります</div>';
     return;
   }
   cart.forEach((item, i) => {
@@ -59,14 +59,15 @@ function renderCart() {
 }
 
 function syncVisibility() {
-  const isCoop = $('route').value === 'coop';
+  // 研究費・財源は生協の宛先でしか意味がない
+  const isCoop = findDestination(profile, $('dest').value)?.kind === 'coop';
   $('funding-row').style.display = isCoop ? '' : 'none';
   $('source').style.display = $('funding').value === 'research' ? '' : 'none';
 }
 
 function draft() {
   return composeOrder({
-    route: $('route').value,
+    destinationId: $('dest').value,
     items: cart,
     profile,
     fundingMode: $('funding').value,
@@ -79,13 +80,16 @@ async function init() {
   cart = await loadCart();
 
   // option のラベルはユーザー設定由来の文字列なので new Option で生成する
-  const route = $('route');
-  route.textContent = '';
-  route.append(
-    new Option(profile.coop.label, 'coop'),
-    new Option(profile.bookstore.storeName || profile.bookstore.label, 'bookstore')
-  );
-  route.value = profile.defaults.route;
+  const dest = $('dest');
+  dest.textContent = '';
+  if (profile.destinations.length) {
+    for (const d of profile.destinations) dest.append(new Option(destinationLabel(d), d.id));
+  } else {
+    dest.append(new Option('宛先未登録 — 設定から追加', ''));
+  }
+  dest.value = profile.defaults.destinationId;
+  // 保存済みの既定 id が消えている場合に「何も選ばれていない」状態にしない
+  if (!dest.value) dest.selectedIndex = 0;
   $('funding').value = profile.defaults.fundingMode;
 
   const source = $('source');
@@ -103,12 +107,12 @@ async function init() {
   syncVisibility();
 }
 
-$('route').addEventListener('change', syncVisibility);
+$('dest').addEventListener('change', syncVisibility);
 $('funding').addEventListener('change', syncVisibility);
 
 $('mail').addEventListener('click', async () => {
   if (!cart.length) return;
-  const missing = validate(profile, $('route').value);
+  const missing = validate(profile, $('dest').value);
   if (missing.length) {
     // 黙って設定画面へ飛ばすと何が起きたか分からないため、まず理由を見せてから開く
     $('status').textContent = `設定が未入力です: ${missing.join(' / ')}`;

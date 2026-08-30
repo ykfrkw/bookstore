@@ -11,6 +11,10 @@
 
 const PANEL_ID = 'jimoto-panel';
 
+// manifest の content_scripts.css と同じファイル。shadow root へも流し込むため
+// パスを定数で持つ（CSS の実体は content.css の 1 箇所だけに置く）
+const PANEL_CSS_PATH = 'content.css';
+
 /**
  * サイト別設定。
  * - host: location.hostname に対する判定。どれにも当たらなければ何もしない
@@ -112,9 +116,43 @@ function el(tag, attrs = {}, children = []) {
   return n;
 }
 
+// fetch した CSS のキャッシュ。SPA の部分遷移で再マウントするたびに
+// 取り直すのは無駄なので、1 度読めたら使い回す
+let panelCssText = null;
+
+/**
+ * パネル用の CSS を shadow root の先頭に差し込む。
+ *
+ * manifest の content_scripts.css は light DOM にしか効かず shadow 境界を
+ * 越えないため、同じ content.css を fetch して <style> として入れ直す。
+ * 遠回りに見えるが、CSS 文字列を JS 側へ複製しないための措置
+ * （見た目の単一ソースを content.css に保つ）。
+ */
+async function injectPanelStyle(shadow) {
+  try {
+    if (panelCssText === null) {
+      const res = await fetch(url(PANEL_CSS_PATH));
+      // 非 OK のボディ（や空文字）を panelCssText に恒久キャッシュすると、
+      // 以降ずっと無スタイルのままになる。catch に流して次回やり直させる
+      if (!res.ok) throw new Error(`CSS ${res.status}`);
+      panelCssText = await res.text();
+    }
+    shadow.prepend(el('style', { text: panelCssText }));
+  } catch (e) {
+    // CSS が取れなくてもパネル自体は動く。ここで throw すると
+    // 「パネルが出ない」という最悪の壊れ方になるので警告に留める
+    console.warn('[jimoto] パネルの CSS を読み込めませんでした', e);
+  }
+}
+
 /**
  * @param {string} msg
  * @param {'info'|'error'} [kind] エラー時のみ赤系の左ボーダーで区別する
+ *
+ * トーストは意図的に light DOM のまま残している。表示するのは
+ * 「本文をコピーしました」等の固定メッセージだけで、利用者の設定値
+ * （宛先・財源ラベル・課題番号）を含まないため、ページ側から読めても
+ * 漏れる情報が無い。manifest 注入の content.css でそのまま装飾される
  */
 function toast(msg, kind = 'info') {
   const t = el('div', { class: 'jimoto-toast', text: msg });
@@ -137,17 +175,25 @@ async function buildPanel(core, book) {
   const d = profile.defaults;
 
   const state = {
-    route: d.route,
+    destinationId: d.destinationId || profile.destinations[0]?.id || '',
     fundingMode: d.fundingMode,
     fundingSourceId: d.fundingSourceId || profile.fundingSources[0]?.id || '',
     quantity: d.quantity || 1,
   };
 
-  const routeSel = el('select', { class: 'jimoto-input' }, [
-    el('option', { value: 'coop', text: profile.coop.label }),
-    el('option', { value: 'bookstore', text: profile.bookstore.storeName || profile.bookstore.label }),
-  ]);
-  routeSel.value = state.route;
+  // option のラベルはユーザー設定由来の文字列なので text で入れる（innerHTML 補間はしない）
+  const destSel = el(
+    'select',
+    { class: 'jimoto-input' },
+    profile.destinations.length
+      ? profile.destinations.map((x) =>
+          el('option', { value: x.id, text: core.destinationLabel(x) })
+        )
+      : [el('option', { value: '', text: '宛先未登録 — 設定から追加' })]
+  );
+  destSel.value = state.destinationId;
+  // 保存済みの既定 id が消えている場合に「何も選ばれていない」状態にしない
+  if (!destSel.value) destSel.selectedIndex = 0;
 
   const fundingSel = el('select', { class: 'jimoto-input' }, [
     el('option', { value: 'private', text: '私費' }),
@@ -185,23 +231,24 @@ async function buildPanel(core, book) {
   ]);
 
   const syncVisibility = () => {
-    const isCoop = routeSel.value === 'coop';
+    // 研究費・財源は生協の宛先でしか意味がない。composeOrder と同じ解決経路で種別を見る
+    const isCoop = core.findDestination(profile, destSel.value)?.kind === 'coop';
     fundingRow.style.display = isCoop ? '' : 'none';
     sourceSel.style.display = fundingSel.value === 'research' ? '' : 'none';
   };
-  routeSel.addEventListener('change', syncVisibility);
+  destSel.addEventListener('change', syncVisibility);
   fundingSel.addEventListener('change', syncVisibility);
 
   const item = () => ({ book, quantity: clampQty(qty.value) });
   const orderArgs = () => ({
-    route: routeSel.value,
+    destinationId: destSel.value,
     profile,
     fundingMode: fundingSel.value,
     fundingSourceId: sourceSel.value,
   });
 
   const openMail = async () => {
-    const missing = core.validate(profile, routeSel.value);
+    const missing = core.validate(profile, destSel.value);
     if (missing.length) {
       toast(`設定が未入力です: ${missing.join(' / ')}`, 'error');
       chrome.runtime.openOptionsPage?.();
@@ -226,7 +273,7 @@ async function buildPanel(core, book) {
 
   const copyRemarks = async () => {
     const draft = core.composeOrder({ ...orderArgs(), items: [item()] });
-    if (!draft.remarks) return toast('備考欄は生協ルートのみです');
+    if (!draft.remarks) return toast('備考欄は生協の宛先のみです');
     await navigator.clipboard.writeText(draft.remarks);
     toast('備考欄用の1行をコピーしました');
   };
@@ -252,11 +299,11 @@ async function buildPanel(core, book) {
   };
   refreshBook();
 
-  const panel = el('div', { id: PANEL_ID, class: 'jimoto-panel' }, [
+  const panel = el('div', { class: 'jimoto-panel' }, [
     el('div', { class: 'jimoto-title', text: '地元で買う' }),
     bookEl,
     isbnEl,
-    el('div', { class: 'jimoto-row' }, [el('label', { class: 'jimoto-label', text: '注文先' }), routeSel]),
+    el('div', { class: 'jimoto-row' }, [el('label', { class: 'jimoto-label', text: '注文先' }), destSel]),
     fundingRow,
     el('div', { class: 'jimoto-row' }, [el('label', { class: 'jimoto-label', text: '冊数' }), qty]),
     el('div', { class: 'jimoto-actions' }, [
@@ -279,20 +326,40 @@ async function buildPanel(core, book) {
   ]);
 
   syncVisibility();
-  return { panel, refreshBook };
+
+  // パネルは closed shadow root に閉じ込める。
+  // <select> には利用者が設定した宛先ラベルと財源ラベル（科研費の課題番号を
+  // 含む）が入るため、light DOM のままだとホストページ上の任意のスクリプトが
+  // querySelectorAll('#jimoto-panel option') で読めてしまう。
+  // closed なら host.shadowRoot が null になり DOM 走査で到達できない。
+  // 'open' では shadowRoot 経由で読めてしまい対策にならないので使わない。
+  const host = el('div', { id: PANEL_ID, class: 'jimoto-host' });
+  const shadow = host.attachShadow({ mode: 'closed' });
+  // CSS は拡張内リソースなので実質即座に解決する。ここで待つことで
+  // 無スタイルのパネルが一瞬見える状態を避ける（失敗しても素通りする）
+  await injectPanelStyle(shadow);
+  shadow.append(panel);
+
+  return { host, refreshBook };
 }
 
-function mount(panel, site) {
+/**
+ * ホスト要素をページに差し込む。
+ * shadow の中身ではなくホスト（light DOM 側）を挿す点が要。
+ * jimoto-floating の position: fixed はページのレイアウト上で効く必要があり、
+ * ホストは light DOM にあるので manifest 注入の content.css がそのまま効く。
+ */
+function mount(host, site) {
   document.getElementById(PANEL_ID)?.remove();
   for (const sel of site.anchors) {
     const anchor = document.querySelector(sel);
     if (anchor) {
-      anchor.prepend(panel);
+      anchor.prepend(host);
       return true;
     }
   }
-  panel.classList.add('jimoto-floating');
-  document.body.append(panel);
+  host.classList.add('jimoto-floating');
+  document.body.append(host);
   return true;
 }
 
@@ -308,9 +375,9 @@ async function run() {
   // book はボタンのハンドラと参照共有しているので、あとから中身を
   // 書き換えれば、クリック時点では常に最新の書誌でメールが組まれる。
   const book = { isbn13, source: 'loading' };
-  const { panel, refreshBook } = await buildPanel(core, book);
+  const { host, refreshBook } = await buildPanel(core, book);
   refreshBook(true);
-  mount(panel, site);
+  mount(host, site);
 
   const fetched = await core.fetchBook(isbn13);
   const merged = core.mergeFallback(fetched, { isbn13, ...site.fallback() });

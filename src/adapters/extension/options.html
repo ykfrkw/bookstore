@@ -19,7 +19,7 @@
       input, select, textarea { width: 100%; padding: 7px 9px; margin-top: 3px; font-size: 14px; }
       textarea { min-height: 76px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
       .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
-      /* 財源はカード様式（shadcn の Card 相当） */
+      /* 宛先・財源の 1 件はカード様式（shadcn の Card 相当） */
       .src {
         border: 1px solid var(--border);
         border-radius: 8px;
@@ -55,30 +55,13 @@
     </div>
     <label>配達場所<input id="req-delivery" placeholder="医学部本館 3F 305号室" /></label>
 
-    <h2>大学生協</h2>
-    <p class="hint">書籍部・外商担当の受付メールアドレスを入れてください。</p>
-    <div class="grid">
-      <label>表示名<input id="coop-label" /></label>
-      <label>受取店舗<input id="coop-store" /></label>
-    </div>
-    <div class="grid">
-      <label>宛先メール<input id="coop-to" type="email" /></label>
-      <label>CC<input id="coop-cc" /></label>
-    </div>
-    <div class="grid">
-      <label>受取方法<input id="coop-receive" placeholder="研究室へ配達" /></label>
-      <label>組合員番号<input id="coop-member" /></label>
-    </div>
-
-    <h2>地元書店</h2>
-    <div class="grid">
-      <label>店名<input id="bs-store" placeholder="○○書店" /></label>
-      <label>宛先メール<input id="bs-to" type="email" /></label>
-    </div>
-    <div class="grid">
-      <label>受取方法<input id="bs-receive" placeholder="店頭受取" /></label>
-      <label>会員番号<input id="bs-customer" /></label>
-    </div>
+    <h2>宛先</h2>
+    <p class="hint">
+      生協・書店をまとめて何件でも登録できます。注文時にここから選びます。
+      生協を選んだときだけ研究費・財源の指定が出ます。
+    </p>
+    <div id="destinations"></div>
+    <button id="add-dest" type="button" style="margin-top: 10px">宛先を追加</button>
 
     <h2>研究費の財源</h2>
     <p class="hint">複数登録できます。注文時に選択します。</p>
@@ -87,11 +70,8 @@
 
     <h2>既定値</h2>
     <div class="grid">
-      <label>注文先
-        <select id="def-route">
-          <option value="coop">大学生協</option>
-          <option value="bookstore">地元書店</option>
-        </select>
+      <label>既定の宛先
+        <select id="def-dest"></select>
       </label>
       <label>支払区分
         <select id="def-funding">

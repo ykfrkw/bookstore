@@ -1,6 +1,6 @@
 {
   "name": "bookstore",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Amazon の書籍ページから、大学生協（研究費/私費）または地元書店への注文メール下書きを作る。Chrome 拡張とローカルページの両方で動く。",
   "type": "module",
