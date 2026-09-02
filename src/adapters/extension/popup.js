@@ -17,7 +17,7 @@ function renderCart() {
   list.textContent = '';
   if (!cart.length) {
     // 静的な文言のみ（変数補間なし）なので innerHTML で問題ない
-    list.innerHTML = '<div class="empty">書籍ページで「まとめる」を押すと<br />ここに溜まります</div>';
+    list.innerHTML = '<div class="empty">書籍ページで「カートに入れる」を押すと<br />ここに溜まります</div>';
     return;
   }
   cart.forEach((item, i) => {

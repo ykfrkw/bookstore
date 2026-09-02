@@ -18,7 +18,7 @@ Amazon の書籍ページを起点に、**大学生協**（研究費／私費の
    作るところで止める。誤発注は研究費の執行事故になる。
 2. **Amazon から取得した情報を保存・再配布しない。** ページから拾うのは
    その場でメール下書きを作るための一時利用に留める。永続化するのは
-   ISBN・ユーザー自身の設定・ユーザーが明示的に「まとめる」を押した項目だけ。
+   ISBN・ユーザー自身の設定・ユーザーが明示的に「カートに入れる」を押した項目だけ。
 3. **書誌の一次ソースは openBD。** Amazon のスクレイピング結果は openBD が
    空振りしたときのフォールバックにすぎない。この優先順位を逆にしない。
 4. **個人情報は端末内に留める。** 外部送信は openBD への ISBN 問い合わせのみ。
@@ -85,6 +85,14 @@ npm run build     # dist/bookstore-<version>.zip を作る
 - **MV3 の content script は ESM ではない。** `chrome.runtime.getURL` +
   動的 `import()` で core を読んでいる。`web_accessible_resources` に
   `core/*.js` を入れ忘れると黙って失敗する。
+- **`chrome.runtime.openOptionsPage` は content script では `undefined`。**
+  拡張ページ（popup / options / background）専用の API。`?.()` で呼ぶと例外も
+  出さず静かに no-op するため、原因に気づくまでが長い。設定画面は
+  `background.js` へ `sendMessage`（`'jimoto:open-options'`）して開くこと。
+  `options.html` を `web_accessible_resources` に足す方法は、ホストページへの
+  露出面を増やすので採らない。MV3 の service worker は ephemeral で
+  「Receiving end does not exist」が返りうるので、`chrome.runtime.lastError` を
+  必ず読んで失敗を利用者に見せる。
 - **`file://` ではローカル版が動かない。** ES module が CORS で弾かれるため、
   必ず `npm run local`（http 経由）で開く。
 

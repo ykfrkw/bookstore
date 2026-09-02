@@ -121,6 +121,34 @@
   margin-top: 8px;
 }
 
+/*
+ * 主導線ブロック。Amazon の購入ボックスと同じ「縦積み・幅いっぱい・角丸ピル」に
+ * 寄せて、利用者の中にある位置の記憶を借りる。
+ *
+ * 寄せるのは形だけで、色は寄せない。対応サイトが Amazon・楽天ブックス・紀伊國屋・
+ * 丸善ジュンク堂の 4 つあり、Amazon の黄/橙は他 3 サイトで浮くため。配色は
+ * SPEC の shadcn/zinc + ブランドブルー（--primary）の規定をそのまま使う。
+ *
+ * .jimoto-actions 自体を縦積みにしないのは、下段の ghost 行を横並びのまま
+ * 残すため。ピル形状をボタン側の variant にしないのは、これが variant ではなく
+ * 「主導線ブロックに置かれたときの見え方」だから（variant は primary /
+ * outline / ghost の 3 つのまま）。
+ */
+.jimoto-actions-stack {
+  flex-direction: column;
+  gap: 8px;
+}
+
+/*
+ * flex: none への戻しは必須。.jimoto-btn は flex: 1（= flex-basis: 0%）を持ち、
+ * column 方向ではそれが主軸サイズになるため height: 36px が無効化されて
+ * ボタンが文字の高さまで潰れる。幅は align-items: stretch（既定）が埋める。
+ */
+.jimoto-actions-stack .jimoto-btn {
+  flex: none;
+  border-radius: 999px;
+}
+
 /* ボタン: 既定は outline。primary は塗り、ghost は枠なし */
 .jimoto-btn {
   flex: 1;
@@ -191,6 +219,11 @@
   font-family: system-ui, sans-serif;
   font-size: 13px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  /* 次の一手を案内する長い文言が入るので、狭いウィンドウでビューポート外へ
+     はみ出さないよう折り返す（transform: translateX(-50%) と併用するため
+     幅の上限は vw 基準で持つ） */
+  max-width: min(90vw, 460px);
+  text-align: center;
 }
 
 /* エラー通知のみ赤ボーダーで区別する（赤はエラー専用色。通常情報には使わない） */
