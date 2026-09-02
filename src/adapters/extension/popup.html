@@ -22,6 +22,9 @@
       button.act { flex: 1; padding: 0 8px; }
       .empty { color: var(--muted-foreground); padding: 18px 0; text-align: center; }
       a { color: var(--muted-foreground); font-size: 11px; }
+      /* メールボタンの経路予告。popup は tabs.create で閉じるのでクリック後は読めない */
+      #mail-hint { color: var(--muted-foreground); font-size: 11px; margin-top: 6px; }
+      #mail-hint:empty { display: none; }
       /* 赤はエラー専用。設定未入力の案内に使う */
       #status { color: var(--destructive); font-size: 12px; margin-top: 8px; }
       /* エラーでない案内（簡略版で開いた・本文をコピーした）は muted で出す */
@@ -45,6 +48,7 @@
       <button class="act primary" id="mail">1通にまとめてメール</button>
       <button class="act" id="copy">コピー</button>
     </div>
+    <div id="mail-hint" aria-live="polite"></div>
     <div class="actions"><button class="act" id="clear">リストを空にする</button></div>
     <div id="status" aria-live="polite"></div>
     <div style="margin-top: 10px"><a href="#" id="opt">設定</a></div>

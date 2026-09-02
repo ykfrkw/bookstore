@@ -84,7 +84,10 @@ npm run build     # dist/bookstore-<version>.zip を作る
   利用者に伝える）、(3) どちらも超える → **フル版の本文**をコピーして
   `mailtoHeaderOnly` で開く。
   長さ判定を UI 側に二重実装しない。件数で決め打ちしない（長さで判定すれば足りる）。
-  経路 3 を単純な `location.href = mailto` に潰さない（テストで固定してある）。
+  経路 3 を単純な `location.href = mailto` に潰さない（3 面が `pickMailPlan` を
+  通していることと、コピーがメーラーを開く前にあることを
+  `test/extension-source.test.mjs` がソース文字列で固定している）。
+  簡略版でも**利用者が入力した項目は落とさない**（組合員番号・会員番号）。
   簡略版は書名と ISBN を必ず残す（ISBN の 1 桁違いに人が気づける唯一の手がかり）。
   利用者が書いた `message` / `item.note` があるときは `composeOrder` が
   `compact` を無視してフル版に戻す。ここを UI 側の判定に移さない。

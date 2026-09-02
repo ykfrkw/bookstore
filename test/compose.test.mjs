@@ -255,6 +255,14 @@ const coopArgs = {
   fundingSourceId: 'kaken',
 };
 
+/**
+ * 簡略版に残しておくべき余裕（encoded の文字数）。
+ * 「収まる／収まらない」だけを見ていると、テンプレートを数十字伸ばしても
+ * テストは通るのに複数点の注文が黙ってコピー経路へ落ちる。SPEC と profile.js の
+ * 「ここを長くするな」という警告を実行可能にするための下限。
+ */
+const COMPACT_MIN_HEADROOM = 300;
+
 test('生協・和書 1 冊: フル版は mailto に収まらないが簡略版は収まる', () => {
   const full = composeOrder(coopArgs);
   const compact = composeOrder({ ...coopArgs, compact: true });
@@ -262,6 +270,11 @@ test('生協・和書 1 冊: フル版は mailto に収まらないが簡略版�
   assert.ok(full.encodedLength > MAILTO_SAFE_LENGTH);
   assert.equal(compact.tooLongForMailto, false);
   assert.ok(compact.encodedLength < MAILTO_SAFE_LENGTH);
+  // 収まるだけでなく余裕も残っていること（テンプレートを伸ばしすぎたら落とす）
+  assert.ok(
+    compact.encodedLength < MAILTO_SAFE_LENGTH - COMPACT_MIN_HEADROOM,
+    `簡略版の余裕が ${MAILTO_SAFE_LENGTH - compact.encodedLength} 字しかない`
+  );
   // 縮んでいることも押さえる（同じ本文を返す実装ミスを弾く）
   assert.ok(compact.body.length < full.body.length);
 });
@@ -272,7 +285,7 @@ test('書店・和書 1 冊でも簡略版は mailto に収まる', () => {
   const compact = composeOrder({ ...args, compact: true });
   assert.equal(full.tooLongForMailto, true);
   assert.equal(compact.tooLongForMailto, false);
-  assert.ok(compact.encodedLength < MAILTO_SAFE_LENGTH);
+  assert.ok(compact.encodedLength < MAILTO_SAFE_LENGTH - COMPACT_MIN_HEADROOM);
 });
 
 test('簡略版でも書名と ISBN は必ず残る（誤発注に気づける唯一の手がかり）', () => {
@@ -290,7 +303,39 @@ test('簡略版は著者・出版社・罫線・■ を落とす', () => {
   assert.ok(!compact.body.includes('----'));
   assert.ok(!compact.body.includes('■'));
   assert.ok(!compact.body.includes('合計'));
-  assert.ok(!compact.body.includes('組合員番号'));
+});
+
+test('簡略版でも組合員番号・会員番号は落とさない（非空なら入る）', () => {
+  // 既定は空の任意項目。埋まっているのは「自分の生協・書店がこの番号を求める」
+  // という利用者の明示的な入力なので、簡略版で黙って落とすと注文が通らなくなる
+  const coop = composeOrder({ ...coopArgs, compact: true });
+  assert.match(coop.body, /組合員番号: 1234567/);
+  assert.equal(coop.tooLongForMailto, false);
+
+  // 書店では呼び名が変わる（フル版と同じ規則）
+  const withNumber = withDefaults({
+    ...filledProfile,
+    destinations: filledProfile.destinations.map((x) =>
+      x.id === 'bs' ? { ...x, memberNumber: '999' } : x
+    ),
+  });
+  const store = composeOrder({
+    destinationId: 'bs',
+    items: oneBook,
+    profile: withNumber,
+    compact: true,
+  });
+  assert.match(store.body, /会員番号: 999/);
+  assert.ok(!store.body.includes('組合員番号'));
+
+  // 空なら行ごと出さない（「会員番号: 」だけが残る空行を作らない）
+  const noNumber = composeOrder({
+    destinationId: 'bs',
+    items: oneBook,
+    profile: filledProfile,
+    compact: true,
+  });
+  assert.ok(!noNumber.body.includes('会員番号'));
 });
 
 test('簡略版でも生協なら財源と予算代表者が入り、書店では入らない', () => {

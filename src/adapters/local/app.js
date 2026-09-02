@@ -106,6 +106,32 @@ function orderArgs() {
   };
 }
 
+/**
+ * 同じ入力からフル版と簡略版を組み、実際に送られる経路を決める。
+ * 簡略版は「フル版と同じ入力」から作らないと、宛先や支払区分が食い違う
+ * （このページは選択の変更で本文を作り直さないため）。
+ */
+function planFrom(args) {
+  return pickMailPlan({
+    full: composeOrder(args),
+    compact: composeOrder({ ...args, compact: true }),
+  });
+}
+
+/** 経路をクリック前に予告する。3 面のうち本文プレビューを持つのはこの面だけ */
+function planNotice(mode) {
+  if (mode === 'compact') {
+    return 'この本文（簡略版の文面）を入れてメーラーを開きます。貼り付けは不要です。';
+  }
+  if (mode === 'copy') {
+    return (
+      'この本文はメーラーを開くときにクリップボードへコピーします。' +
+      '開いたメールに貼り付けてください（和文は mailto の長さ制限を超えるため）。'
+    );
+  }
+  return '';
+}
+
 function compose() {
   const missing = validate(profile, $('dest').value);
   if (missing.length) {
@@ -116,13 +142,14 @@ function compose() {
     showMessage('書籍が 1 件も入っていません');
     return null;
   }
-  showMessage('');
-  // 簡略版は「lastDraft と同じ入力」から作らないと、フル版と簡略版で宛先や
-  // 支払区分が食い違う（このページは選択の変更で本文を作り直さないため）
   lastArgs = orderArgs();
-  lastDraft = composeOrder(lastArgs);
+  // textarea には「実際に送られる本文」を出す。フル版を見せて簡略版を送ると、
+  // 画面で校正した文章と違うものが飛ぶ（この面だけプレビューが嘘をつく）
+  const plan = planFrom(lastArgs);
+  lastDraft = plan.draft;
   $('out-subject').value = lastDraft.subject;
   $('out-body').value = lastDraft.body;
+  showMessage(planNotice(plan.mode), 'info');
   return lastDraft;
 }
 
@@ -198,10 +225,9 @@ $('mailto').addEventListener('click', async () => {
   // 簡略版は生成物なので、差し替えると利用者の編集を黙って捨てることになる。
   // （ひとこと欄が埋まっている場合は composeOrder 側がフル版に戻す）
   const edited = !lastDraft || !lastArgs || $('out-body').value !== lastDraft.body;
-  const plan = pickMailPlan({
-    full: d,
-    compact: edited ? null : composeOrder({ ...lastArgs, compact: true }),
-  });
+  // 手編集が無ければ compose() と同じ入力から組み直す。textarea の本文を
+  // full として渡すと、コピー経路のときに簡略版の本文をコピーしてしまう
+  const plan = edited ? pickMailPlan({ full: d }) : planFrom(lastArgs);
   if (plan.mode === 'copy') {
     // フォーカスが移る前にコピーを済ませる。この順序を入れ替えない
     await navigator.clipboard.writeText(plan.copyText);

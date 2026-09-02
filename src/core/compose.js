@@ -102,9 +102,8 @@ function renderItem(item, index) {
 }
 
 /**
- * 簡略版の 1 件。ISBN 行と書名行の 2 行だけにする。
- * 書名は削らない。ISBN が 1 桁違ったときに人が気づける唯一の手がかりで、
- * 誤発注防止として実際に効いているため（著者・出版社・発行年は落とす）。
+ * 簡略版の 1 件。ISBN 行と書名行の 2 行だけにする（著者・出版社・発行年は落とす）。
+ * 書名は削らない。ISBN が 1 桁違ったときに人が気づける唯一の手がかりだから。
  */
 function renderCompactItem(item) {
   const b = item.book || {};
@@ -236,6 +235,9 @@ export function composeOrder({
     p.requester.deliveryPlace && receiveMethod.includes('配達')
       ? `配達: ${p.requester.deliveryPlace}`
       : '',
+    // 既定は空の任意項目。非空なら「この番号を求められている」という利用者の
+    // 明示的な入力なので簡略版でも落とさない（呼び名の規則はフル版と同じ）
+    dest?.memberNumber && `${isCoop ? '組合員番号' : '会員番号'}: ${dest.memberNumber}`,
   ]
     .filter(Boolean)
     .join('\n');
