@@ -56,6 +56,17 @@ test('web_accessible_resources に options.html を出していない', () => {
   assert.ok(!exposed.includes('options.html'), 'options.html を公開してはいけない');
 });
 
+test('web_accessible_resources に content script が fetch/import する資産がある', () => {
+  // 「出してはいけないもの」だけを固定すると、消しても green のまま実機だけ壊れる。
+  // core/*.js が抜けると loadCore() の動的 import が失敗してパネルが出ず、
+  // content.css が抜けると shadow root へ流し込む CSS が取れず完全に無スタイルになる
+  // （CLAUDE.md「入れ忘れると黙って失敗する」）
+  const exposed = manifest.web_accessible_resources.flatMap((entry) => entry.resources);
+  for (const required of ['core/*.js', 'content.css']) {
+    assert.ok(exposed.includes(required), `web_accessible_resources に ${required} が無い`);
+  }
+});
+
 test('permissions は storage だけ', () => {
   // 権限を増やさない方針の固定。sendMessage は無条件に使えるので追加は不要
   assert.deepEqual(manifest.permissions, ['storage']);
@@ -63,9 +74,36 @@ test('permissions は storage だけ', () => {
 
 test('content.js は openOptionsPage を呼ばない', () => {
   // 拡張ページ専用 API で content script には存在せず、?.() で呼ぶと
-  // 例外も出さず静かに no-op する（「設定を押しても何も起きない」の原因）
+  // 例外も出さず静かに no-op する（「設定を押しても何も起きない」の原因）。
+  //
+  // 守りたいのは「呼ばない」ことであって「名前を書かない」ことではない。
+  // 名前ごと禁じると罠の説明が婉曲表現になり、一番読まれる場所から grep 可能な
+  // 固有名詞が消えるので、呼び出し形 `openOptionsPage(` / `openOptionsPage?.(`
+  // だけを禁じる
   const source = readExtensionFile('content.js');
-  assert.doesNotMatch(source, /chrome\.runtime\.openOptionsPage/);
+  assert.doesNotMatch(source, /openOptionsPage\s*(\?\.)?\s*\(/);
+});
+
+test('content.js と background.js のメッセージ型が一致する', () => {
+  // MV3 の制約で content script と service worker は定数を共有できず、型は
+  // 2 ファイルに直書きになる。片方だけ改名すると npm test は green のまま、
+  // 実機では毎回「設定画面を開けませんでした」が出る（元のバグに近い症状）。
+  // 対をテストで固定するのがその代わりの防波堤
+  const background = readExtensionFile('background.js');
+  const messageType = background.match(/OPEN_OPTIONS\s*=\s*['"]([^'"]+)['"]/)?.[1];
+  assert.ok(messageType, 'background.js から OPEN_OPTIONS の値を取り出せない');
+  assert.ok(
+    readExtensionFile('content.js').includes(messageType),
+    `content.js が background.js のメッセージ型 ${messageType} を送っていない`,
+  );
+});
+
+test('background.js は onMessage listener をトップレベルで同期登録する', () => {
+  // MV3 の SW は idle で停止し、メッセージ受信で起動する。起動直後の同期実行中に
+  // 登録が終わっていないとイベントを取りこぼすため、await の後ろや関数の中に
+  // 入れてはいけない。行頭一致で「ネストしていない」ことを固定する
+  const background = readExtensionFile('background.js');
+  assert.match(background, /^chrome\.runtime\.onMessage\.addListener\(/m);
 });
 
 test('content.js が使う .jimoto-actions-stack が content.css に定義されている', () => {

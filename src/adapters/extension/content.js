@@ -162,7 +162,8 @@ function toast(msg, kind = 'info') {
   t.setAttribute('role', 'status');
   // トーストは left:50% / bottom:32px の固定位置なので、2 枚出ると完全に重なって
   // どちらも読めなくなる。「設定が未入力です」→ openOptions() 失敗の経路は
-  // 1 クリックで 2 枚出るため、常に最新の 1 枚だけを残す
+  // 1 クリックで 2 枚出るため、常に最新の 1 枚だけを残す。
+  // 消える側の情報は openOptions(context) で残る側の文言に畳み込んである
   for (const old of document.querySelectorAll('.jimoto-toast')) old.remove();
   document.body.append(t);
   setTimeout(() => t.remove(), 2600);
@@ -171,17 +172,28 @@ function toast(msg, kind = 'info') {
 /**
  * 設定画面（options.html）を開く。
  *
- * 設定画面を直接開く chrome.runtime の API は拡張ページ専用で、content script
- * には存在しない（CLAUDE.md「罠として知っておくこと」参照）。以前はそれを
- * optional call `?.()` で呼んでおり、例外も出さず静かに no-op していた
- * （押しても何も起きない）。`?.()` の形に戻さないこと。失敗は必ず利用者に見せる。
- * 呼んでいないことは test/manifest.test.mjs が文字列レベルで固定している。
+ * `chrome.runtime.openOptionsPage` は拡張ページ（popup / options / background）
+ * 専用の API で、content script には存在しない（CLAUDE.md「罠として知っておく
+ * こと」参照）。以前はそれを optional call `?.()` で呼んでおり、例外も出さず
+ * 静かに no-op していた（押しても何も起きない）。`?.()` の形に戻さないこと。
+ * 失敗は必ず利用者に見せる。content script が呼んでいないことは
+ * test/manifest.test.mjs が文字列レベルで固定している。
+ *
+ * @param {string} [context] 呼び出し元の文脈。失敗トーストの先頭に前置する。
+ *
+ * なぜ文脈を引き回すか: トーストは常に最新の 1 枚だけを残す（→ toast()）。
+ * openMail() は「設定が未入力です: …」を出した直後にここを呼ぶが、
+ * sendMessage が同期的に throw する経路（拡張の更新直後の "Extension context
+ * invalidated"）では失敗トーストが同じ tick 内で append される。ブラウザが
+ * 描画する前に未入力トーストが消えるため、文脈を引き継がないと「何が未入力か」
+ * が一度も表示されない。単発化そのものは正しいので、消える側の情報を
+ * 残る側の文言に畳み込む。
  */
-function openOptions() {
+function openOptions(context = '') {
   const fail = (detail) => {
     console.warn('[jimoto] 設定画面を開けませんでした', detail);
     toast(
-      '設定画面を開けませんでした。拡張のアイコンを右クリック →「オプション」から開いてください',
+      `${context}設定画面を開けませんでした。拡張のアイコンを右クリック →「オプション」から開いてください`,
       'error'
     );
   };
@@ -284,8 +296,11 @@ async function buildPanel(core, book) {
   const openMail = async () => {
     const missing = core.validate(profile, destSel.value);
     if (missing.length) {
-      toast(`設定が未入力です: ${missing.join(' / ')}`, 'error');
-      openOptions();
+      // 設定画面が開けた場合はこちらが最後に残る。開けなかった場合は
+      // openOptions() の失敗トーストがこの文言を前置して引き継ぐ
+      const detail = `設定が未入力です: ${missing.join(' / ')}`;
+      toast(detail, 'error');
+      openOptions(`${detail}。`);
       return;
     }
     const draft = core.composeOrder({ ...orderArgs(), items: [item()] });
