@@ -76,10 +76,18 @@ npm run build     # dist/bookstore-<version>.zip を作る
 ## 罠として知っておくこと
 
 - **mailto の長さ制限。** 日本語 1 文字がパーセントエンコードで 9 文字になるため、
-  和文の注文メールは 1 冊でも 2000 文字制限を超える。`composeOrder` は
-  `tooLongForMailto` を返すので、UI は「本文をクリップボードにコピー →
-  `mailtoHeaderOnly` でメーラーを開く」の 2 段構えにすること。
-  これを単純な `location.href = mailto` に戻さない（テストで固定してある）。
+  **フル版**の注文メールは 1 冊でも 2000 文字制限を超える。ただし挨拶・結び・罫線・
+  著者・出版社・合計行を削った簡略版（`composeOrder({ compact: true })`）なら収まる。
+  UI は `compose.js` の `pickMailPlan` を通して 3 段階で選ぶこと。
+  (1) フル版が収まる → 本文入り `mailto`、
+  (2) 簡略版が収まる → 簡略版の本文入り `mailto`（貼り付け不要。簡略版で開いたことを
+  利用者に伝える）、(3) どちらも超える → **フル版の本文**をコピーして
+  `mailtoHeaderOnly` で開く。
+  長さ判定を UI 側に二重実装しない。件数で決め打ちしない（長さで判定すれば足りる）。
+  経路 3 を単純な `location.href = mailto` に潰さない（テストで固定してある）。
+  簡略版は書名と ISBN を必ず残す（ISBN の 1 桁違いに人が気づける唯一の手がかり）。
+  利用者が書いた `message` / `item.note` があるときは `composeOrder` が
+  `compact` を無視してフル版に戻す。ここを UI 側の判定に移さない。
 - **ASIN ≠ ISBN。** 和書はだいたい一致するが、Kindle 版・洋書・ISBN-13 のみの
   新刊では一致しない。必ず `isValidIsbn10` を通す。
 - **MV3 の content script は ESM ではない。** `chrome.runtime.getURL` +

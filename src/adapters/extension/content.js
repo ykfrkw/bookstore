@@ -303,15 +303,26 @@ async function buildPanel(core, book) {
       openOptions(`${detail}。`);
       return;
     }
-    const draft = core.composeOrder({ ...orderArgs(), items: [item()] });
-    if (draft.tooLongForMailto) {
-      // 和文はほぼ必ずここに来る。本文をコピーしてから宛先・件名だけでメーラーを開く。
-      await navigator.clipboard.writeText(draft.body);
-      window.open(draft.mailtoHeaderOnly, '_blank');
+    // 情報量の多い経路から順に試す（フル版 → 簡略版 → コピー）。
+    // 判定は core の pickMailPlan に寄せてあり、長さの再計算はしない。
+    // パネルには自由記述の入力欄が無いので簡略版は常に候補にできる
+    const args = { ...orderArgs(), items: [item()] };
+    const plan = core.pickMailPlan({
+      full: core.composeOrder(args),
+      compact: core.composeOrder({ ...args, compact: true }),
+    });
+    if (plan.mode === 'copy') {
+      // window.open でフォーカスが移ると clipboard.writeText が拒否されうるので、
+      // コピーを先に済ませる。この順序を入れ替えない
+      await navigator.clipboard.writeText(plan.copyText);
+      window.open(plan.open, '_blank');
       toast('本文をコピーしました。開いたメールに貼り付けてください');
       return;
     }
-    window.open(draft.mailto, '_blank');
+    window.open(plan.open, '_blank');
+    // 簡略版は貼り付けが要らない代わりに書誌が減る。黙って差し替えると
+    // 「いつもと文面が違う」だけが残るので、簡略版であることを明示する
+    if (plan.mode === 'compact') toast('本文入りでメーラーを開きました（簡略版の文面）');
   };
 
   const copyBody = async () => {

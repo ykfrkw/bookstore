@@ -24,6 +24,8 @@
       a { color: var(--muted-foreground); font-size: 11px; }
       /* 赤はエラー専用。設定未入力の案内に使う */
       #status { color: var(--destructive); font-size: 12px; margin-top: 8px; }
+      /* エラーでない案内（簡略版で開いた・本文をコピーした）は muted で出す */
+      #status.info { color: var(--muted-foreground); }
       #status:empty { display: none; }
     </style>
   </head>

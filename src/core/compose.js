@@ -4,11 +4,13 @@
  * 設計方針:
  *  - 自動発注はしない。人が最終確認して送るための「下書き」を作るだけ。
  *  - mailto: は URL 長制限（実質 2000 文字前後）に当たる。日本語は 1 文字が
- *    パーセントエンコードで 9 文字になるため、和文の注文メールは 1 冊でも
- *    ほぼ確実に超える。そこで本文入りの mailto が使えない場合は
- *      (1) 本文をクリップボードにコピーし
- *      (2) 宛先と件名だけの mailtoHeaderOnly でメーラーを開く
- *    という 2 段構えにする（tooLongForMailto を見て UI が分岐する）。
+ *    パーセントエンコードで 9 文字になるため、和文の注文メールはフル版だと
+ *    1 冊でも超える。そこで文面を 2 種類持ち、UI は情報量の多い方から順に
+ *    試す（→ pickMailPlan）。
+ *      (1) フル版が収まる → 本文入り mailto で開く
+ *      (2) 収まらないが簡略版（compact）が収まる → 簡略版の本文入り mailto で開く
+ *      (3) どちらも収まらない → フル版の本文をコピーし mailtoHeaderOnly で開く
+ *    長さ判定は buildMailto の tooLongForMailto 1 箇所だけを見る。
  *  - 複数冊をまとめて 1 通にできる。公費は検収の都合でまとめた方が実務的。
  */
 
@@ -99,6 +101,20 @@ function renderItem(item, index) {
   return lines.filter(Boolean).join('\n');
 }
 
+/**
+ * 簡略版の 1 件。ISBN 行と書名行の 2 行だけにする。
+ * 書名は削らない。ISBN が 1 桁違ったときに人が気づける唯一の手がかりで、
+ * 誤発注防止として実際に効いているため（著者・出版社・発行年は落とす）。
+ */
+function renderCompactItem(item) {
+  const b = item.book || {};
+  const price = b.price == null ? '' : ` ${yen(b.price)}`;
+  return [
+    `ISBN ${displayIsbn(b.isbn13 || '')}`,
+    `『${b.title || '(書名未取得)'}』 ${item.quantity ?? 1}冊${price}`,
+  ].join('\n');
+}
+
 function totals(items) {
   const count = items.reduce((a, i) => a + (i.quantity ?? 1), 0);
   const known = items.filter((i) => i.book?.price != null);
@@ -114,6 +130,7 @@ function totals(items) {
  * @param {'research'|'private'} [args.fundingMode]
  * @param {string} [args.fundingSourceId]
  * @param {string} [args.message] 末尾に添える自由記述
+ * @param {boolean} [args.compact] 簡略版の文面にする（本文入り mailto に収めるため）
  */
 export function composeOrder({
   destinationId,
@@ -122,6 +139,7 @@ export function composeOrder({
   fundingMode = 'research',
   fundingSourceId = '',
   message = '',
+  compact = false,
 }) {
   const p = withDefaults(profile);
   // 宛先未登録でも例外は投げない。総関数のままにしておき、止めるのは UI 側の validate
@@ -165,12 +183,22 @@ export function composeOrder({
     .filter(Boolean)
     .join('\n');
 
+  // 利用者が自分で書いた文章（ひとこと・備考）は簡略版では落ちる。それを黙って
+  // 捨てるのは不可なので、compact を指定されていてもフル版に戻す。UI 側の判定に
+  // 頼らず core で担保する（落としても実行時エラーにはならず、気づけないため）。
+  // フル版に戻れば長さ制限を超えるので、UI は自然に「コピー + ヘッダのみ」に落ちる
+  const hasFreeText =
+    Boolean(String(message).trim()) || items.some((i) => String(i.note || '').trim());
+  const useCompact = compact && !hasFreeText;
+
   const rule = '-'.repeat(32);
   const summary = `合計 ${items.length}点 / ${count}冊${
     amount ? ` / 概算 ${yen(amount)}${partial ? '（価格不明の書籍を除く）' : ''}` : ''
   }`;
 
-  const body = [
+  const keepBlankLines = (x) => x !== undefined && x !== null && x !== false;
+
+  const fullBody = [
     fill(isCoop ? p.templates.coopGreeting : p.templates.bookstoreGreeting, vars),
     '',
     header,
@@ -188,9 +216,53 @@ export function composeOrder({
     p.requester.affiliation,
     p.requester.email,
   ]
-    .filter((x) => x !== undefined && x !== null && x !== false)
+    .filter(keepBlankLines)
     .join('\n')
     .replace(/\n{3,}/g, '\n\n');
+
+  // 受取店舗は独立行にせず受取方法に括弧で添える（行数を削るのが簡略版の目的）
+  const receiveLine = receiveMethod
+    ? `受取: ${receiveMethod}${storeName ? `（${storeName}）` : ''}`
+    : storeName
+      ? `受取: ${storeName}`
+      : '';
+
+  const compactInfo = [
+    isCoop && `支払: ${fundingLabel(p, order)}`,
+    isCoop &&
+      fundingMode === 'research' &&
+      `予算代表者: ${findFundingSource(p, fundingSourceId)?.representative || p.requester.name}`,
+    receiveLine,
+    p.requester.deliveryPlace && receiveMethod.includes('配達')
+      ? `配達: ${p.requester.deliveryPlace}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const signature = [
+    `${p.requester.name}${p.requester.affiliation ? `（${p.requester.affiliation}）` : ''}`,
+    [p.requester.email, p.requester.phone].filter(Boolean).join(' / '),
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const compactBody = [
+    fill(isCoop ? p.templates.coopCompactGreeting : p.templates.bookstoreCompactGreeting, vars),
+    '',
+    items.map(renderCompactItem).join('\n'),
+    '',
+    compactInfo,
+    '',
+    fill(isCoop ? p.templates.coopCompactClosing : p.templates.bookstoreCompactClosing, vars),
+    '',
+    signature,
+  ]
+    .filter(keepBlankLines)
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n');
+
+  const body = useCompact ? compactBody : fullBody;
 
   return {
     to,
@@ -200,4 +272,26 @@ export function composeOrder({
     ...buildMailto({ to, cc, subject, body }),
     remarks: isCoop ? remarksLine(p, order) : '',
   };
+}
+
+/**
+ * 情報量の多い経路から順に選ぶ。UI 3 面（注入パネル / popup / ローカル版）で
+ * 同じ判定を書き写さないための純関数。長さ判定はここで再計算せず、
+ * buildMailto が付けた tooLongForMailto だけを見る。
+ *
+ * @param {{full: object, compact?: object|null}} candidates
+ *   full: composeOrder の戻り値（フル版）。
+ *   compact: 簡略版。使ってはいけない場面（本文を手編集した後など）は null を渡す。
+ * @returns {{mode:'full'|'compact'|'copy', open:string, copyText:string, draft:object}}
+ *   mode 'copy' のときだけ copyText を書き込む。open は必ず window.open / location へ。
+ */
+export function pickMailPlan({ full, compact = null }) {
+  if (!full.tooLongForMailto) {
+    return { mode: 'full', open: full.mailto, copyText: '', draft: full };
+  }
+  if (compact && !compact.tooLongForMailto) {
+    return { mode: 'compact', open: compact.mailto, copyText: '', draft: compact };
+  }
+  // コピー経路には長さ制限が無いので、渡すのは常に情報量の多いフル版
+  return { mode: 'copy', open: full.mailtoHeaderOnly, copyText: full.body, draft: full };
 }

@@ -1,5 +1,5 @@
 import { withDefaults, validate, findDestination, destinationLabel } from './core/profile.js';
-import { composeOrder } from './core/compose.js';
+import { composeOrder, pickMailPlan } from './core/compose.js';
 import { loadProfile, loadCart, removeFromCart, clearCart } from './core/storage.js';
 
 const $ = (id) => document.getElementById(id);
@@ -65,14 +65,25 @@ function syncVisibility() {
   $('source').style.display = $('funding').value === 'research' ? '' : 'none';
 }
 
-function draft() {
+function draft(compact = false) {
   return composeOrder({
     destinationId: $('dest').value,
     items: cart,
     profile,
     fundingMode: $('funding').value,
     fundingSourceId: $('source').value,
+    compact,
   });
+}
+
+/**
+ * #status への表示。赤（--destructive）はエラー専用なので、
+ * 案内は info クラスに切り替えて muted 色で出す（SPEC「UI / デザインシステム」）。
+ */
+function setStatus(message, kind = 'error') {
+  const status = $('status');
+  status.className = kind === 'error' ? '' : 'info';
+  status.textContent = message;
 }
 
 async function init() {
@@ -115,18 +126,26 @@ $('mail').addEventListener('click', async () => {
   const missing = validate(profile, $('dest').value);
   if (missing.length) {
     // 黙って設定画面へ飛ばすと何が起きたか分からないため、まず理由を見せてから開く
-    $('status').textContent = `設定が未入力です: ${missing.join(' / ')}`;
+    setStatus(`設定が未入力です: ${missing.join(' / ')}`);
     setTimeout(() => chrome.runtime.openOptionsPage(), 600);
     return;
   }
-  const d = draft();
-  if (d.tooLongForMailto) {
-    // tabs.create で popup が閉じるため、コピー完了を待ってから開く
-    await navigator.clipboard.writeText(d.body);
-    chrome.tabs.create({ url: d.mailtoHeaderOnly });
-    return;
+  // 情報量の多い経路から順に試す（フル版 → 簡略版 → コピー）。
+  // popup には自由記述の入力欄が無いので簡略版は常に候補にできる
+  const plan = pickMailPlan({ full: draft(), compact: draft(true) });
+  // 案内は tabs.create の前に書く。ただし tabs.create で popup は閉じるため、
+  // 読めるのは popup を切り離して開いている場合だけ（それ以外は
+  // 「本文が入っているか」がそのままフィードバックになる）
+  if (plan.mode === 'compact') {
+    setStatus('本文入りでメーラーを開きました（簡略版の文面）', 'info');
+  } else if (plan.mode === 'copy') {
+    setStatus('本文をコピーしました。開いたメールに貼り付けてください', 'info');
+  } else {
+    setStatus('');
   }
-  chrome.tabs.create({ url: d.mailto });
+  // tabs.create で popup が閉じるため、コピー完了を待ってから開く
+  if (plan.mode === 'copy') await navigator.clipboard.writeText(plan.copyText);
+  chrome.tabs.create({ url: plan.open });
 });
 
 $('copy').addEventListener('click', async () => {
