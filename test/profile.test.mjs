@@ -205,3 +205,24 @@ test('validate: 解決した宛先の to が空なら 宛先メール', () => {
   });
   assert.deepEqual(validate(p, 'bs'), ['宛先メール']);
 });
+
+test('簡略版テンプレートは既存プロフィールにも自動で入る', () => {
+  // 既に設定を保存している利用者の templates には compact 系のキーが無い。
+  // ここが空だと簡略版の挨拶・結びが消えたまま送られるので、既定値のマージを固定する
+  const saved = {
+    requester: legacyProfile.requester,
+    templates: { coopClosing: '独自の結び' },
+  };
+  const p = withDefaults(saved);
+  assert.equal(p.templates.coopClosing, '独自の結び'); // 利用者の設定は上書きしない
+  for (const key of [
+    'coopCompactGreeting',
+    'coopCompactClosing',
+    'bookstoreCompactGreeting',
+    'bookstoreCompactClosing',
+  ]) {
+    assert.ok(p.templates[key], `${key} の既定値が入っていない`);
+  }
+  assert.match(p.templates.coopCompactGreeting, /\{orgLabel\}/);
+  assert.match(p.templates.bookstoreCompactGreeting, /\{orgLabel\}/);
+});

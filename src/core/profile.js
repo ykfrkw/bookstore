@@ -69,6 +69,21 @@ export const DEFAULT_PROFILE = {
       '{orgLabel} 御中\n\nお世話になっております。\n下記の書籍のお取り寄せをお願いできますでしょうか。',
     bookstoreClosing:
       'ご在庫・入荷可否をご確認のうえ、ご連絡いただけますと幸いです。\nどうぞよろしくお願いいたします。',
+    /**
+     * 簡略版（compose の compact）の挨拶・結び。
+     *
+     * 和文はフル版だと 1 冊でも mailto の長さ制限を超えるが、挨拶・結びを詰め、
+     * 罫線・著者・出版社・発行年・合計行を落とすと収まる。収まれば本文入りで
+     * メーラーが開き、貼り付けが要らなくなる（→ compose.js の pickMailPlan）。
+     * ここを長くすると簡略版まで制限を超えてコピー経路に落ちるので、短く保つこと。
+     * 「御中」を含めてあるのは、宛名の敬称も大学ごとの流儀に合わせて
+     * 差し替えられるようにするため（フル版の *Greeting と同じ作り）。
+     */
+    coopCompactGreeting: '{orgLabel} 御中\n\n下記を注文します。',
+    coopCompactClosing: 'よろしくお願いいたします。',
+    bookstoreCompactGreeting:
+      '{orgLabel} 御中\n\nお世話になっております。下記のお取り寄せをお願いします。',
+    bookstoreCompactClosing: 'ご確認のうえご連絡ください。よろしくお願いいたします。',
     /** 生協の備考欄に貼る 1 行（公費 WEB フォーム用にコピーできる） */
     remarksLine: '{fundingLabel} / 予算代表者: {representative} / 配達先: {deliveryPlace}',
   },

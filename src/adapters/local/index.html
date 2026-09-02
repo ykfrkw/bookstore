@@ -71,6 +71,8 @@
       .item input { width: 64px; }
       /* 赤はエラー専用色 */
       .bad { color: var(--destructive); font-size: 13px; }
+      /* 赤はエラー専用。エラーでない案内（簡略版で開いた・コピーした）は muted で出す */
+      .info { color: var(--muted-foreground); font-size: 13px; }
       /* 宛先・財源は 1 件 = 1 カード（拡張の設定画面と同じ見た目に揃える） */
       .card {
         border: 1px solid var(--border); border-radius: var(--radius); background: var(--card);

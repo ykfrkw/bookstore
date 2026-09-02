@@ -5,7 +5,7 @@
 import { extractIsbn, toIsbn13 } from '../../core/isbn.js';
 import { fetchBook, mergeFallback } from '../../core/bibliography.js';
 import { withDefaults, validate, findDestination, destinationLabel } from '../../core/profile.js';
-import { composeOrder, buildMailto } from '../../core/compose.js';
+import { composeOrder, buildMailto, pickMailPlan } from '../../core/compose.js';
 import { loadProfile } from '../../core/storage.js';
 import { initSettings } from './settings.js';
 
@@ -13,12 +13,26 @@ const $ = (id) => document.getElementById(id);
 let profile;
 let items = [];
 let lastDraft = null;
+// lastDraft を作ったときの composeOrder 引数。簡略版を同じ入力から組むために持つ
+let lastArgs = null;
 
 // 冊数の下限は 1。非数値・0 以下が composeOrder に流れ込むのを防ぐ
 const clampQty = (v) => {
   const n = Math.floor(Number(v));
   return Number.isFinite(n) && n >= 1 ? n : 1;
 };
+
+/**
+ * #errors への表示。赤（--destructive）はエラー専用なので、エラーでない案内は
+ * info クラスに切り替えて muted 色で出す（SPEC「UI / デザインシステム」）。
+ * 表示のたびにクラスを付け替えるのが要点。前回の色が残ると
+ * 「コピーしました」が赤字で出る。
+ */
+function showMessage(text, kind = 'error') {
+  const box = $('errors');
+  box.className = kind === 'error' ? 'bad' : 'info';
+  box.textContent = text;
+}
 
 function renderList() {
   const list = $('list');
@@ -69,7 +83,7 @@ async function lookup() {
     if (!fetched) errors.push(`openBD に見つかりません（手で書名を補ってください）: ${isbn13}`);
     items.push({ book: mergeFallback(fetched, { isbn13 }), quantity: 1, note: '' });
   }
-  $('errors').textContent = errors.join('\n');
+  showMessage(errors.join('\n'));
   renderList();
 }
 
@@ -80,27 +94,62 @@ function syncVisibility() {
   $('source-wrap').style.display = isCoop && $('funding').value === 'research' ? '' : 'none';
 }
 
-function compose() {
-  const missing = validate(profile, $('dest').value);
-  if (missing.length) {
-    $('errors').textContent = `設定が未入力です: ${missing.join(' / ')}`;
-    return null;
-  }
-  if (!items.length) {
-    $('errors').textContent = '書籍が 1 件も入っていません';
-    return null;
-  }
-  $('errors').textContent = '';
-  lastDraft = composeOrder({
+/** composeOrder への引数。フル版と簡略版で同じものを使い回す */
+function orderArgs() {
+  return {
     destinationId: $('dest').value,
     items,
     profile,
     fundingMode: $('funding').value,
     fundingSourceId: $('source').value,
     message: $('message').value,
+  };
+}
+
+/**
+ * 同じ入力からフル版と簡略版を組み、実際に送られる経路を決める。
+ * 簡略版は「フル版と同じ入力」から作らないと、宛先や支払区分が食い違う
+ * （このページは選択の変更で本文を作り直さないため）。
+ */
+function planFrom(args) {
+  return pickMailPlan({
+    full: composeOrder(args),
+    compact: composeOrder({ ...args, compact: true }),
   });
+}
+
+/** 経路をクリック前に予告する。3 面のうち本文プレビューを持つのはこの面だけ */
+function planNotice(mode) {
+  if (mode === 'compact') {
+    return 'この本文（簡略版の文面）を入れてメーラーを開きます。貼り付けは不要です。';
+  }
+  if (mode === 'copy') {
+    return (
+      'この本文はメーラーを開くときにクリップボードへコピーします。' +
+      '開いたメールに貼り付けてください（和文は mailto の長さ制限を超えるため）。'
+    );
+  }
+  return '';
+}
+
+function compose() {
+  const missing = validate(profile, $('dest').value);
+  if (missing.length) {
+    showMessage(`設定が未入力です: ${missing.join(' / ')}`);
+    return null;
+  }
+  if (!items.length) {
+    showMessage('書籍が 1 件も入っていません');
+    return null;
+  }
+  lastArgs = orderArgs();
+  // textarea には「実際に送られる本文」を出す。フル版を見せて簡略版を送ると、
+  // 画面で校正した文章と違うものが飛ぶ（この面だけプレビューが嘘をつく）
+  const plan = planFrom(lastArgs);
+  lastDraft = plan.draft;
   $('out-subject').value = lastDraft.subject;
   $('out-body').value = lastDraft.body;
+  showMessage(planNotice(plan.mode), 'info');
   return lastDraft;
 }
 
@@ -150,7 +199,7 @@ $('lookup').addEventListener('click', lookup);
 $('clear').addEventListener('click', () => {
   items = [];
   $('input').value = '';
-  $('errors').textContent = '';
+  showMessage('');
   renderList();
 });
 $('dest').addEventListener('change', syncVisibility);
@@ -172,14 +221,30 @@ function currentDraft() {
 $('mailto').addEventListener('click', async () => {
   const d = currentDraft();
   if (!d) return;
-  if (d.tooLongForMailto) {
-    await navigator.clipboard.writeText(d.body);
-    $('errors').textContent =
-      '本文をコピーしました。開いたメールに貼り付けてください（和文は mailto の長さ制限を超えるため）。';
-    location.href = d.mailtoHeaderOnly;
-    return;
+  // 本文 textarea を手で直している場合は簡略版を候補にしない。
+  // 簡略版は生成物なので、差し替えると利用者の編集を黙って捨てることになる。
+  // （ひとこと欄が埋まっている場合は composeOrder 側がフル版に戻す）
+  const edited = !lastDraft || !lastArgs || $('out-body').value !== lastDraft.body;
+  // 手編集が無ければ compose() と同じ入力から組み直す。textarea の本文を
+  // full として渡すと、コピー経路のときに簡略版の本文をコピーしてしまう
+  const plan = edited ? pickMailPlan({ full: d }) : planFrom(lastArgs);
+  if (plan.mode === 'copy') {
+    // フォーカスが移る前にコピーを済ませる。この順序を入れ替えない
+    await navigator.clipboard.writeText(plan.copyText);
+    showMessage(
+      '本文をコピーしました。開いたメールに貼り付けてください（和文は mailto の長さ制限を超えるため）。',
+      'info'
+    );
+  } else if (plan.mode === 'compact') {
+    // 貼り付けは要らない代わりに書誌が減る。文面が変わった理由を明示する
+    showMessage(
+      '本文入りでメーラーを開きました（簡略版の文面。貼り付けは不要です）。',
+      'info'
+    );
+  } else {
+    showMessage('');
   }
-  location.href = d.mailto;
+  location.href = plan.open;
 });
 
 $('copy').addEventListener('click', async () => {
