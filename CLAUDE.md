@@ -47,6 +47,7 @@ src/core/                環境非依存のロジック。ここに副作用と 
 src/adapters/extension/  Chrome 拡張（MV3）
   content-sites.js       JIMOTO_SITES（サイト別セレクタ）・jimotoPageText
   content-ui.js          jimotoUrl / jimotoEl / jimotoToast / jimotoInjectPanelStyle
+  content-bg.js          jimotoRequestBackground / jimotoOpenOptions / jimotoOpenCart
   content-mail.js        jimotoMakeMailActions（メール送出とコピー）
   content-panel.js       jimotoBuildOrderForm（注文先・支払・財源・冊数の入力欄）
   content.js             パネルの組み立て・差し込み・URL 監視。attachShadow はここ
@@ -85,9 +86,9 @@ service worker を実際に import し、その import 先が生成物なので�
 - **`src/core/` を編集したら `npm run sync` を走らせる。** 忘れると拡張だけ
   古いコードで動き、原因の分かりにくいバグになる。`src/adapters/extension/core/`
   は生成物なので直接編集しない。
-- **content script は 5 ファイルで、順序に意味がある。** `manifest.json` の
+- **content script は 6 ファイルで、順序に意味がある。** `manifest.json` の
   `content_scripts[0].js` は
-  `content-sites.js` → `content-ui.js` → `content-mail.js` →
+  `content-sites.js` → `content-ui.js` → `content-bg.js` → `content-mail.js` →
   `content-panel.js` → `content.js` の順。
   ESM ではなく classic script なので、各ファイルのトップレベル宣言が同じ
   isolated world で共有される（`import` 文は無い）。**順序を変えると
@@ -110,12 +111,18 @@ service worker を実際に import し、その import 先が生成物なので�
   ファイル間の契約は grep できるように `JIMOTO_` / `jimoto`
   接頭で統一する（`el` のような裸の名前を新しく足さない）。
   ただし `content.js` は分割前からの裸のグローバルを既に持っている:
-  **`PANEL_ID` / `loadCore` / `openOptions` / `buildPanel` /
-  `mount` / `run` / `tick` / `lastHref`**（改名はしない。churn が大きく利益が
-  小さい）。**`clampQty` は同じ由来の裸のグローバルだったが `src/core/cart.js`
-  へ移した**（popup・ローカル版と 3 重複していたため）。content script からは
+  **`PANEL_ID` / `loadCore` / `buildPanel` / `mount` / `run` / `tick` /
+  `lastHref`**（改名はしない。churn が大きく利益が小さい）。
+  **`requestBackground` / `openOptions` / `openCart` は同じ由来の裸のグローバル
+  だったが、`content-bg.js` へ切り出すときに `jimoto` 接頭を付けた**
+  （`jimotoRequestBackground` / `jimotoOpenOptions` / `jimotoOpenCart`）。
+  裸のままで良いのは `content.js` に閉じている名前だけで、ファイルを跨いだ時点で
+  「契約は接頭で grep できる」という上の規約の対象になるため。残る 7 個は
+  `content.js` の中だけで使う。
+  **`clampQty` は同じ由来の裸のグローバルだったが `src/core/cart.js` へ移した**
+  （popup・ローカル版と 3 重複していたため）。content script からは
   `loadCore()` 経由の `core.clampQty` で使う。
-  全ファイルが同じ字句環境を共有するので、別ファイルでこの 8 個を
+  全ファイルが同じ字句環境を共有するので、別ファイルでこの 7 個を
   再宣言すると `SyntaxError: Identifier 'mount' has already been declared` で
   そのファイルの注入が丸ごと死ぬ。新しく書くときはこの一覧を避けること。
   分割を `chrome.runtime.getURL` + 動的 `import()` に変えないこと。分割した
@@ -224,6 +231,24 @@ service worker を実際に import し、その import 先が生成物なので�
   露出面を増やすので採らない。MV3 の service worker は ephemeral で
   「Receiving end does not exist」が返りうるので、`chrome.runtime.lastError` を
   必ず読んで失敗を利用者に見せる。
+- **`chrome.action.openPopup` は content script からは呼べない。** Chrome 127+ に
+  **存在する**ので使えそうに見えるのが罠。(a) content script に `chrome.action` は
+  露出せず `undefined`、(b) service worker 経由で呼んでもユーザージェスチャを
+  要求されるため `sendMessage` からの呼び出しでは失敗する。
+  **カートは `background.js` で `chrome.tabs.create` して `popup.html` をタブとして
+  開く**（`'jimoto:open-cart'`）。ツールバーの popup と同じページなので実装の重複が
+  ゼロで、`tabs` 権限も `web_accessible_resources` への追加も要らない
+  （`tabs.create` は URL を読まず、拡張自身の呼び出しなので WAR は無関係）。
+  `popup.html` は開かれ方が 2 通りになるので、**タブモードだけ 340px 固定を解く**
+  （`body.tab`。判定は `chrome.tabs.getCurrent()` が popup で `undefined` を返すこと。
+  `?tab=1` のような URL の契約は作らない）。`test/manifest.test.mjs` が
+  「`openPopup` をどこでも呼んでいない」「`popup.html` を WAR に出していない」を、
+  `test/extension-source.test.mjs` が `body.tab` の CSS/JS 対を固定している。
+- **content script から background に頼む処理は `requestBackground` を通す。**
+  失敗トーストの単発化・文脈の前置・`sendMessage` の**同期 throw** の catch という
+  3 つの配慮が畳み込んである。型ごとに別実装を書くと、どれかが落ちた版が生まれて
+  「押しても何も起きない」が再発する。文言（何を開くか・自力で辿り着く道）だけを
+  `JIMOTO_BACKGROUND_REQUESTS` に足すこと。
 - **MV3 のバッジ（`chrome.action.*`）はブラウザセッションを越えて永続しない。**
   Chrome を再起動するとカートが残っていてもバッジだけ消える（SW が idle で
   停止しただけなら消えない）。だから `background.js` は

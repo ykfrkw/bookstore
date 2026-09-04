@@ -48,7 +48,7 @@ function requireSyncedCore() {
  * `chrome.storage.local` の有無で backend を選ぶが、実際の get/set は
  * 呼び出し時に `globalThis.chrome` を読むので、テストごとの差し替えが効く）。
  */
-function makeChromeStub({ cart = [] } = {}) {
+function makeChromeStub({ cart = [], lastError } = {}) {
   const calls = [];
   const listeners = {};
   const record = (name) => (argument) => calls.push([name, argument]);
@@ -62,8 +62,18 @@ function makeChromeStub({ cart = [] } = {}) {
         setBadgeBackgroundColor: record('setBadgeBackgroundColor'),
         setBadgeTextColor: record('setBadgeTextColor'),
       },
+      tabs: {
+        // callback は同期で呼ぶ。実物は非同期だが、handler が読むのは
+        // 「callback の中の chrome.runtime.lastError」なので順序の再現で足りる
+        create: (options, callback) => {
+          calls.push(['tabs.create', options]);
+          callback?.();
+        },
+      },
       runtime: {
-        lastError: undefined,
+        lastError,
+        // 実物は chrome-extension://<id>/<path>。id はテストに関係が無いので固定値
+        getURL: (path) => `chrome-extension://jimoto/${path}`,
         // 呼び出しを記録する。handler が openOptionsPage を呼ばずに
         // sendResponse({ ok: true }) だけ返す形でも応答の形は同じなので、
         // 「実際に設定画面を開こうとしたか」は履歴でしか見られない
@@ -244,6 +254,43 @@ test('onMessage: 既知の型は true を返して非同期に応答する', asy
     // 「開きました」と応答する）。実際に代理実行したことまで見る
     assert.deepEqual(calls, [['openOptionsPage']], 'openOptionsPage を呼んでいない');
   });
+});
+
+test('onMessage(open-cart): popup.html を新しいタブで開く', async () => {
+  await withChrome({}, async ({ calls }) => {
+    const responses = [];
+    const result = boot.listeners.onMessage({ type: 'jimoto:open-cart' }, {}, (response) =>
+      responses.push(response),
+    );
+    assert.equal(result, true, 'onMessage が true を返さない（非同期応答が閉じられる）');
+    assert.deepEqual(responses, [{ ok: true, error: undefined }]);
+    // **開く先が popup.html であることが本体。** ツールバーの popup と同じページを
+    // タブで開くから実装の重複がゼロで済む（→ SPEC「カートへの導線」）。
+    // 別ページを作って開く形に変わったらここで落ちる。
+    // URL は getURL 経由（拡張の絶対 URL）。相対パスのままだと開いたタブの
+    // 解決基点が SW ではないので落ちる
+    assert.deepEqual(calls, [['tabs.create', { url: 'chrome-extension://jimoto/popup.html' }]]);
+  });
+});
+
+test('onMessage(open-cart): tabs.create が失敗したら ok:false と理由を返す', async () => {
+  // OPEN_OPTIONS と同じ形。失敗を握り潰して ok:true を返すと、送信側
+  // （content script）は失敗トーストを出せず「押しても何も起きない」に戻る。
+  // lastError は callback の中で読む必要がある（外で読むと未設定のことがある）
+  const warn = console.warn;
+  console.warn = () => {}; // 期待どおりの警告でテスト出力を汚さない
+  try {
+    await withChrome({ lastError: { message: 'Cannot create tab' } }, async ({ calls }) => {
+      const responses = [];
+      boot.listeners.onMessage({ type: 'jimoto:open-cart' }, {}, (response) =>
+        responses.push(response),
+      );
+      assert.deepEqual(responses, [{ ok: false, error: 'Cannot create tab' }]);
+      assert.equal(calls.length, 1, 'tabs.create は 1 回だけ呼ぶ');
+    });
+  } finally {
+    console.warn = warn;
+  }
 });
 
 test('onMessage: 未知の型には応答しない', async () => {

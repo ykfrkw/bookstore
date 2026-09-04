@@ -187,6 +187,59 @@ UI の分岐ではなく **`composeOrder` 側で担保する**（`compact: true`
 | 全文をコピー | `plain`（To/Subject/本文） | メーラーを使わず貼る |
 | 備考欄をコピー | `remarks` 1 行 | 生協の公費 WEB フォーム |
 
+### カートへの導線（v0.4・2026-09-05）
+
+**問題**: 「カートに入れる」で溜めた本を 1 通にまとめる画面（`popup.html`）は
+ツールバーのアイコンからしか開けない。**アイコンをピン留めしていない利用者には
+そもそも見えない**ので、入れた本に二度と辿り着けない。バッジ（→「バッジ」節）も
+同じ理由で見えず、二重注文を防ぐ手当てが丸ごと効かない。
+
+**`chrome.action.openPopup` は使えない。** Chrome 127+ に存在するので使えそうに
+見えるが、(a) content script に `chrome.action` は露出せず `undefined`、
+(b) service worker 経由で呼んでもユーザージェスチャを要求されるため、
+`sendMessage` からの呼び出しでは失敗する。どちらも例外ではなく「開かない」で
+終わるので、実装してから気づく形になる。
+
+**決定: `popup.html` を `chrome.tabs.create` でタブとして開く。**
+注入パネルから `'jimoto:open-cart'` を投げ、`background.js` が代理実行する
+（設定画面と同じ経路）。
+
+- **重複実装がゼロ。** ツールバーの popup と同じページなので、注文リストの
+  冊数編集・削除・メール送出のコードが 1 つで済む。専用ページを作る案は、
+  同じ画面が 2 つになって片方だけ直す事故を呼ぶ
+- **新しい権限が要らない。** `tabs.create` は URL やタイトルを読まないので
+  `tabs` 権限は不要（`permissions` は `["storage"]` のまま）
+- **`web_accessible_resources` への追加も要らない。** WAR はホストページからの
+  参照を許すための宣言で、ここは拡張自身の呼び出し。足すと Amazon 上の任意の
+  スクリプトから注文リストの URL を踏めるようになり、`options.html` を出さない
+  のと同じ理由で採らない
+- **開かれ方が 2 通りになるので、タブモードだけ幅を解く**
+  （`body.tab { width: auto; max-width: 560px; margin: 24px auto; }`）。
+  340px 固定のままだと画面の左端に細長い柱が立つ。判定は
+  `chrome.tabs.getCurrent()`（popup では `undefined`、権限不要）。`?tab=1` の
+  ような URL の契約は作らない（開く側が付け忘れると静かに柱に戻る）
+- **タブモードではメール送出後もページが残る。** popup モードは `tabs.create` の
+  時点で閉じるので、経路の予告（`#mail-hint`）を押す前に出す方針は維持する
+- **タブモードは復帰時にカートを読み直す**（`visibilitychange` で `loadCart()` →
+  `renderCart()`）。長寿命のタブなので、開いたまま Amazon 側で「カートに入れる」が
+  走る。読み直さないと、注文メールが読む `rows`（この画面の DOM）は開いた時点の
+  スナップショットのままで、**あとから足した本が黙って落ちた注文メールが組まれる**
+  （「リストを空にする」は画面に一度も出ていないその本まで消す）。popup モードは
+  開くたびに新しい文書なので不要。`storage.onChanged` にしないのは、自分の書き込み
+  （冊数の `change`）でも再描画が走って入力中の欄が作り直されるため
+
+**パネル側はピルを増やさずテキストリンクにする。** 主導線は縦積み 2 段
+（→「主導線のボタン階層」）で、3 つ目のピルを足すと押してほしい順序が読めなく
+なる。既存の「設定」リンクと同じ行（`.jimoto-links`）に「注文リスト（N点）」を
+並べる。点数はパネル表示時に `loadCart()` で入れ、以降は**バッジと同じく
+`chrome.storage.onChanged` で追随する**（トーストの数・バッジの数と必ず一致
+させる。3 箇所で違う数を見せるとどれが正しいか利用者に判断できない）。
+パネルが作り直されるのは `location.href` が変わったときだけなので、追加の戻り値
+だけで更新すると、カートタブや popup で削除しても同じ URL に留まる限り点数が
+古いまま残り、押すと空のリストが開く。**listener はトップレベルに 1 本だけ置いて
+更新関数の参照を差し替える**（`buildPanel` ごとに登録すると SPA 遷移のたびに溜まる）。トーストは「注文リストに追加（N点）」まで
+短くする——次の一手はリンクが担うので、文言での迂回案内が要らなくなる。
+
 ### ローカル版の導線
 
 ローカル版には「注文メールを作る」ボタンがあり、押すまで本文が生成されない。
@@ -333,8 +386,9 @@ CLAUDE.md の絶対前提 4 には、この 1 つを例外として明記して�
 ## バッジ（v0.4・2026-09-04）
 
 ツールバーアイコンに注文リストの中身を出す。ピン留めしていない利用者には
-見えないが（→ ロードマップの「カートへの導線」）、**「入れたことを忘れて
-二重に注文する」を防ぐのが目的**なので、見える人には常に見えている必要がある。
+見えないので、そちらは注入パネルのリンクが受け持つ（→「カートへの導線」）。
+**「入れたことを忘れて二重に注文する」を防ぐのが目的**なので、見える人には
+常に見えている必要がある。
 
 ### 数える単位は「点数」（`cart.length`）
 
@@ -539,10 +593,10 @@ Amazon 等のページ上で動く任意のスクリプトが
 `storage.js` だけが環境を判定する（`chrome.storage` → `localStorage` →
 メモリ）。それ以外の core は完全に純粋。
 
-拡張の content script は 5 ファイルに分かれている。`manifest.json` の
+拡張の content script は 6 ファイルに分かれている。`manifest.json` の
 `content_scripts[0].js` に
-`content-sites.js` → `content-ui.js` → `content-mail.js` → `content-panel.js` →
-`content.js` の順で
+`content-sites.js` → `content-ui.js` → `content-bg.js` → `content-mail.js` →
+`content-panel.js` → `content.js` の順で
 並べた **classic script** で、ESM ではないためトップレベル宣言を同じ
 isolated world で共有する（ファイル間の `import` 文は無い。契約は
 `JIMOTO_` / `jimoto` 接頭で grep する）。順序を変えると `JIMOTO_SITES` の参照が
@@ -561,6 +615,7 @@ URL が変われば全ファイルがロード済みなので成功する——�
 | --- | --- |
 | `content-sites.js` | `JIMOTO_SITES`（サイト別セレクタ）・`jimotoPageText` |
 | `content-ui.js` | `jimotoUrl` / `jimotoEl` / `jimotoToast` / `jimotoInjectPanelStyle` |
+| `content-bg.js` | `jimotoRequestBackground` —— 拡張ページを開く依頼と失敗時の文言（`jimotoOpenOptions` / `jimotoOpenCart`） |
 | `content-mail.js` | `jimotoMakeMailActions` —— `pickMailPlan` → コピー → メーラーの 3 手 |
 | `content-panel.js` | `jimotoBuildOrderForm` —— 注文先・支払・財源・冊数の入力欄 |
 | `content.js` | パネルの組み立てと差し込み、URL 監視、`attachShadow` |

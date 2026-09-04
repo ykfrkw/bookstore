@@ -32,8 +32,18 @@ const manifest = JSON.parse(readExtensionFile('manifest.json'));
 /** content_scripts で注入される js の相対パス（宣言順のまま） */
 const contentScriptFiles = manifest.content_scripts.flatMap((entry) => entry.js || []);
 
-/** 全 content script を 1 本の文字列として見る（型やリテラルの有無を見るとき用） */
-const contentScriptSource = () => contentScriptFiles.map(readExtensionFile).join('\n');
+/** 全 content script を 1 本の文字列として見る（型やリテラルの有無を見るとき用）。
+ * コメントは落とす（説明に型名を書けなくなるのを避ける。→ test/helpers/source.mjs） */
+const contentScriptCode = () => contentScriptFiles.map(readExtensionCode).join('\n');
+
+/**
+ * ソース中のメッセージ型リテラル（`'jimoto:…'`）を重複なく拾う。
+ *
+ * 接頭 `jimoto:` はこの grep のためにある。`[jimoto]`（console.warn の前置）や
+ * `jimoto-`（CSS のクラス名）はコロンを含まないので当たらない。
+ */
+const messageTypesIn = (code) =>
+  [...new Set([...code.matchAll(/'(jimoto:[^']+)'/g)].map(([, type]) => type))].sort();
 
 /** ディスク上に実在する content script（命名規約 content*.js で拾う） */
 const contentScriptFilesOnDisk = readdirSync(EXTENSION_DIR)
@@ -90,6 +100,43 @@ test('web_accessible_resources に options.html を出していない', () => {
   assert.ok(!exposed.includes('options.html'), 'options.html を公開してはいけない');
 });
 
+test('web_accessible_resources に popup.html を出していない', () => {
+  // 注文リスト（popup.html）は注入パネルのリンクからも開くが、**開くのは拡張
+  // 自身**（background の chrome.tabs.create）であって、ホストページではない。
+  // web_accessible_resources はホストページからの参照を許すための宣言なので、
+  // ここに足す必要は無い（調査で確定。この事実をテストとして残しておく）。
+  // 足すと Amazon 上の任意のスクリプトから注文リストの URL を踏めるようになり、
+  // options.html と同じ理由で露出面が広がる
+  const exposed = manifest.web_accessible_resources.flatMap((entry) => entry.resources);
+  assert.ok(
+    !exposed.includes('popup.html'),
+    'popup.html を公開してはいけない（tabs.create は拡張自身の呼び出しなので WAR は不要）',
+  );
+});
+
+test('chrome.action.openPopup をどこでも呼んでいない', () => {
+  // Chrome 127+ に**存在する**のに使えない、という一番踏みやすい罠。
+  // (a) content script に chrome.action は露出しない（undefined）
+  // (b) service worker から呼んでもユーザージェスチャを要求されるため、
+  //     sendMessage 経由の呼び出しでは失敗する
+  // どちらも「注文リストが開かない」で終わるので、tabs.create で popup.html を
+  // タブとして開く形を固定する（→ SPEC「カートへの導線」）。
+  //
+  // コメントを落としてから見るので、罠の説明は API 名を書いて構わない
+  // （名前ごと禁じると、一番読まれる場所から grep 可能な固有名詞が消える）
+  //
+  // 読み先は「どこでも」の名に合わせて拡張ページまで含める。popup / options では
+  // chrome.action が実在するぶん呼び出しが通ってしまい、注文リストを開く導線が
+  // タブ（tabs.create）と popup の 2 通りに割れる
+  for (const path of [...contentScriptFiles, 'background.js', 'popup.js', 'options.js']) {
+    assert.doesNotMatch(
+      readExtensionCode(path),
+      /openPopup\s*(\?\.)?\s*\(/,
+      `${path}: chrome.action.openPopup は content script からも SW からも使えない`,
+    );
+  }
+});
+
 test('web_accessible_resources に content script が fetch/import する資産がある', () => {
   // 「出してはいけないもの」だけを固定すると、消しても green のまま実機だけ壊れる。
   // core/*.js が抜けると loadCore() の動的 import が失敗してパネルが出ず、
@@ -118,29 +165,105 @@ test('content script のどのファイルも openOptionsPage を呼ばない', 
   // 名前ごと禁じると罠の説明が婉曲表現になり、一番読まれる場所から grep 可能な
   // 固有名詞が消えるので、呼び出し形 `openOptionsPage(` / `openOptionsPage?.(`
   // だけを禁じる。
-  // content script は 5 ファイルに分かれているので、content.js だけを見ると
-  // 別ファイルに書かれた呼び出しを見逃す。宣言されている全ファイルを回す
+  // content script は 6 ファイルに分かれているので、content.js だけを見ると
+  // 別ファイルに書かれた呼び出しを見逃す。宣言されている全ファイルを回す。
+  // 読むのはコード（readExtensionCode）。上の openPopup 側と流儀を揃える——
+  // 片方だけコメント込みで見ると、ソースに「この語を書くな」という制約が
+  // 染み出す（→ test/helpers/source.mjs）
   for (const path of contentScriptFiles) {
     assert.doesNotMatch(
-      readExtensionFile(path),
+      readExtensionCode(path),
       /openOptionsPage\s*(\?\.)?\s*\(/,
       `${path}: content script では openOptionsPage は undefined`,
     );
   }
 });
 
-test('content script と background.js のメッセージ型が一致する', () => {
+test('content script と background.js のメッセージ型が双方向で一致する', () => {
   // MV3 の制約で content script と service worker は定数を共有できず、型は
   // 2 ファイルに直書きになる。片方だけ改名すると npm test は green のまま、
   // 実機では毎回「設定画面を開けませんでした」が出る（元のバグに近い症状）。
   // 対をテストで固定するのがその代わりの防波堤。
+  //
+  // **両方向を見る。** 受信側（background）にあって送信側（content）に無い型は
+  // 「押しても何も起きない」に、送信側にあって受信側に無い型は「Receiving end
+  // does not exist」になる。片方向だけだと、どちらを改名したかで検出できたり
+  // できなかったりする（改名は必ずどちらか一方から始まる）。
+  //
+  // 定数名（OPEN_OPTIONS）ではなくリテラルの形で拾うのは、型が増えるたびに
+  // このテストへ追記する運用にしないため。追記漏れは静かに素通りする。
   // 送信側がどのファイルにあっても良いよう、content script 全体を読み先にする
-  const background = readExtensionFile('background.js');
-  const messageType = background.match(/OPEN_OPTIONS\s*=\s*['"]([^'"]+)['"]/)?.[1];
-  assert.ok(messageType, 'background.js から OPEN_OPTIONS の値を取り出せない');
+  const inBackground = messageTypesIn(readExtensionCode('background.js'));
+  const inContent = messageTypesIn(contentScriptCode());
+
+  // 正規表現が何も拾わないと以下のループは空回りして vacuously green になる。
+  // 見たいのは「1 つも拾えない」ことだけなので件数では縛らない。`>= 2` にすると、
+  // 型が 1 つに戻った日に落ちて「接頭を変えたのでは」と原因と違うことを言う
   assert.ok(
-    contentScriptSource().includes(messageType),
-    `content script が background.js のメッセージ型 ${messageType} を送っていない`,
+    inBackground.length > 0,
+    'background.js からメッセージ型を 1 つも拾えない（接頭 jimoto: を変えた?）',
+  );
+
+  for (const type of inBackground) {
+    assert.ok(
+      inContent.includes(type),
+      `background.js の型 ${type} を送る content script が無い（受信側だけ改名した?）`,
+    );
+  }
+  for (const type of inContent) {
+    assert.ok(
+      inBackground.includes(type),
+      `content script が送る型 ${type} の handler が background.js に無い（送信側だけ改名した?）`,
+    );
+  }
+});
+
+test('jimotoRequestBackground に渡す型が JIMOTO_BACKGROUND_REQUESTS に登録されている', () => {
+  // 双方向テストはこれを通す。`messageTypesIn` は呼び出し引数のリテラルも拾うので、
+  // background.js と呼び出し側に型があれば、失敗文言の表（この定数）が欠けたままでも
+  // green になる。実機では未登録の型を渡した瞬間に何も出ない
+  // （jimotoRequestBackground の既定値つき分割代入が最後の砦。それを外すと同期 throw で
+  // トーストが 1 枚も出ず、この関数が防いでいるはずの症状に戻る）
+  const code = contentScriptCode();
+  // 表の参照そのものにも既定値を要求する。上の対応づけが守るのは「今あるコードが
+  // 揃っていること」だけで、未登録の型を渡した瞬間の挙動は守れない。素の分割代入に
+  // 戻すと TypeError が onclick で同期に throw し、トーストが 1 枚も出なくなる
+  assert.match(
+    code,
+    /JIMOTO_BACKGROUND_REQUESTS\[type\]\s*\?\?/,
+    'jimotoRequestBackground: 未登録の型で throw する（JIMOTO_BACKGROUND_REQUESTS[type] に既定値が無い）',
+  );
+  const table = code.match(/JIMOTO_BACKGROUND_REQUESTS\s*=\s*\{([\s\S]*?)\n\};/);
+  assert.ok(table, 'JIMOTO_BACKGROUND_REQUESTS の定義を読み取れない');
+  const registered = messageTypesIn(table[1]);
+  assert.ok(registered.length > 0, 'JIMOTO_BACKGROUND_REQUESTS からキーを 1 つも拾えない');
+
+  // 接頭で縛らずに拾う。型を打ち間違えた呼び出しも「登録されていない型」として落とす
+  const requested = [
+    ...new Set([...code.matchAll(/jimotoRequestBackground\(\s*'([^']+)'/g)].map(([, type]) => type)),
+  ];
+  assert.ok(requested.length > 0, 'jimotoRequestBackground の呼び出しを 1 つも拾えない');
+  for (const type of requested) {
+    assert.ok(
+      registered.includes(type),
+      `jimotoRequestBackground('${type}') の文言が JIMOTO_BACKGROUND_REQUESTS に無い`,
+    );
+  }
+});
+
+test('content.js は storage.onChanged の listener をトップレベルで同期登録する', () => {
+  // パネルの点数はカートの変化に追随する必要がある（popup / カートタブで削除
+  // されても、同じ URL に留まる限り buildPanel は走り直さない）。登録を
+  // buildPanel の中に入れると SPA 遷移のたびに listener が溜まり、古いパネルの
+  // 分まで動く。background.js の 4 listener と同じく行頭一致で固定する
+  const content = readExtensionCode('content.js');
+  assert.match(content, /^chrome\.storage\.onChanged\.addListener\(/m);
+  // キーは core から。リテラルで持つと storage.js と 2 箇所になり、
+  // 片方だけ直した時点で点数が黙って止まる（background.js と同じ話）
+  assert.match(content, /core\.CART_KEY/);
+  assert.ok(
+    !content.includes("'bookstore.cart'"),
+    "content.js に 'bookstore.cart' を直書きしない（core/storage.js の CART_KEY を使う）",
   );
 });
 
@@ -160,6 +283,9 @@ test('content_scripts.js が期待した順序で宣言されている', () => {
   assert.deepEqual(manifest.content_scripts[0].js, [
     'content-sites.js',
     'content-ui.js',
+    // 代理実行は jimotoToast を使うので content-ui.js より後、
+    // 依頼を出す content-mail.js / content.js より前
+    'content-bg.js',
     'content-mail.js',
     'content-panel.js',
     'content.js',
@@ -268,11 +394,29 @@ test('退路の .jimoto-fallback が CSS と対になっている', () => {
   );
 });
 
-test('content.js が使う .jimoto-actions-stack が content.css に定義されている', () => {
-  // shadow DOM 越しの CSS/JS の結合は壊れても静かなので、文字列レベルで対にする。
+/**
+ * content.js がクラス名で参照するレイアウト。
+ *
+ * shadow DOM 越しの CSS/JS の結合は壊れても静かなので、文字列レベルで対にする。
+ * 増えたらこの配列に 1 行足す（テストを増やさない。壊れ方も直し方も同じなので、
+ * 同じ検査の複製が並ぶと「どちらを直すか」を考える手間だけが増える）。
+ */
+const PANEL_LAYOUT_CLASSES = [
   // 外れるとボタンが縦積みにならず、flex: 1 のまま文字高まで潰れる
+  'jimoto-actions-stack',
+  // 外れると二次導線のリンクが行にならず、縦に積まれて主導線と見分けが付かなくなる
+  'jimoto-links',
+];
+
+test('content.js が使うレイアウトのクラスが content.css に定義されている', () => {
   const source = readExtensionFile('content.js');
   const style = readExtensionFile('content.css');
-  assert.match(source, /jimoto-actions-stack/);
-  assert.match(style, /\.jimoto-actions-stack\s*\{/);
+  for (const className of PANEL_LAYOUT_CLASSES) {
+    assert.match(source, new RegExp(className), `content.js が ${className} を使っていない`);
+    assert.match(
+      style,
+      new RegExp(`\\.${className}\\s*\\{`),
+      `content.css に .${className} の定義が無い`,
+    );
+  }
 });

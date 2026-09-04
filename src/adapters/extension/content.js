@@ -38,45 +38,22 @@ async function loadCore() {
 }
 
 /**
- * 設定画面（options.html）を開く。
+ * パネルの点数表示とカートの保存キー。buildPanel / run() が代入する可変参照。
  *
- * `chrome.runtime.openOptionsPage` は拡張ページ（popup / options / background）
- * 専用の API で、content script には存在しない（CLAUDE.md「罠として知っておく
- * こと」参照）。以前はそれを optional call `?.()` で呼んでおり、例外も出さず
- * 静かに no-op していた（押しても何も起きない）。`?.()` の形に戻さないこと。
- * 失敗は必ず利用者に見せる。content script が呼んでいないことは
- * test/manifest.test.mjs が文字列レベルで固定している。
- *
- * @param {string} [context] 呼び出し元の文脈。失敗トーストの先頭に前置する。
- *
- * なぜ文脈を引き回すか: トーストは常に最新の 1 枚だけを残す（→ jimotoToast()）。
- * openMail() は「設定が未入力です: …」を出した直後にここを呼ぶが、
- * sendMessage が同期的に throw する経路（拡張の更新直後の "Extension context
- * invalidated"）では失敗トーストが同じ tick 内で append される。ブラウザが
- * 描画する前に未入力トーストが消えるため、文脈を引き継がないと「何が未入力か」
- * が一度も表示されない。単発化そのものは正しいので、消える側の情報を
- * 残る側の文言に畳み込む。
+ * **listener はトップレベルに 1 本だけ置いて参照を差し替える**（buildPanel ごとに
+ * addListener すると SPA 遷移のたびに溜まる）。パネルが作り直されるのは URL が
+ * 変わったときだけ（→ tick()）なので、同じ URL に留まったまま popup / カートタブで
+ * 削除されると読み直す契機が他に無く、点数だけが古いまま残る——押すと空のリストが
+ * 開き、バッジは消えているので 2 箇所で数が食い違う。
  */
-function openOptions(context = '') {
-  const fail = (detail) => {
-    console.warn('[jimoto] 設定画面を開けませんでした', detail);
-    jimotoToast(
-      `${context}設定画面を開けませんでした。拡張のアイコンを右クリック →「オプション」から開いてください`,
-      'error'
-    );
-  };
-  try {
-    chrome.runtime.sendMessage({ type: 'jimoto:open-options' }, (res) => {
-      // SW は ephemeral で「Receiving end does not exist」が返りうる
-      const error = chrome.runtime.lastError;
-      if (error || !res?.ok) fail(error?.message || res?.error);
-    });
-  } catch (e) {
-    // 拡張の更新直後は sendMessage が同期的に throw する
-    // （"Extension context invalidated"）
-    fail(e);
-  }
-}
+let jimotoSetCartCount = null;
+let jimotoCartKey = ''; // core.CART_KEY。リテラルを重複させないので loadCore() 後に入る
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'local' || !jimotoCartKey || !changes[jimotoCartKey]) return;
+  // remove / clear は newValue が undefined で通知される（→ core/cart.js）
+  jimotoSetCartCount?.((changes[jimotoCartKey].newValue ?? []).length);
+});
 
 async function buildPanel(core, book) {
   const profile = core.withDefaults(await core.loadProfile());
@@ -98,17 +75,39 @@ async function buildPanel(core, book) {
   const host = jimotoEl('div', { id: PANEL_ID, class: 'jimoto-host' });
   const shadow = host.attachShadow({ mode: 'closed' });
 
-  const ui = { toast: jimotoToast, openOptions };
+  const ui = { toast: jimotoToast, openOptions: jimotoOpenOptions };
   const { openMail, copyBody, copyRemarks, fallback } =
     jimotoMakeMailActions({ core, profile, getArgs, ui, root: shadow });
+
+  /**
+   * 注文リストへのテキストリンク。点数を文字として持つので参照を保持する。
+   *
+   * ピル（.jimoto-btn）を 3 つに増やさないのは、主導線が縦積み 2 段という
+   * ボタン階層（SPEC「主導線のボタン階層」）を崩さないため。
+   */
+  const cartLink = jimotoEl('a', {
+    href: '#',
+    onclick: (e) => {
+      e.preventDefault();
+      jimotoOpenCart();
+    },
+  });
+  const setCartCount = (count) => {
+    cartLink.textContent = `注文リスト（${count}点）`;
+  };
+  // 初期表示は storage から。以降の更新はトップレベルの storage.onChanged が担う
+  jimotoSetCartCount = setCartCount;
+  setCartCount((await core.loadCart()).length);
 
   const addCart = async () => {
     // 冊数は入力欄の現在値。getArgs() が items に畳み込んでいるのでそこから
     // 1 冊ぶんを取り出す（同じ値を作る経路を 2 本に増やさない）
     const cart = await core.addToCart(getArgs().items[0]);
-    // content script から popup をプログラムで開く API は無いため、
-    // 次の一手（ツールバーのアイコン）を文言で案内して導線を繋ぐ
-    jimotoToast(`注文リストに追加（${cart.length}点）。ツールバーの拡張アイコンからまとめて1通にできます`);
+    // 自分の書き込みも onChanged で戻ってくるが、ここでも合わせる。トーストと
+    // 同じ tick で確定させておけば、通知が遅れてもこの 2 つは食い違わない
+    setCartCount(cart.length);
+    // 次の一手はリンクが担うので、トーストは結果だけを短く出す
+    jimotoToast(`注文リストに追加（${cart.length}点）`);
   };
 
   // 書誌はあとから（openBD 応答後に）更新できるよう、要素参照を保持しておく
@@ -156,15 +155,19 @@ async function buildPanel(core, book) {
     // 実体は content-mail.js が持つ。ボタンの下に置くのは、押した直後に
     // 目が行っている場所の続きに出したいため
     fallback,
-    jimotoEl('a', {
-      class: 'jimoto-settings',
-      text: '設定',
-      href: '#',
-      onclick: (e) => {
-        e.preventDefault();
-        openOptions();
-      },
-    }),
+    // 二次導線はテキストリンクの 1 行にまとめる。ここをピルにすると
+    // 主導線（縦積み 2 段）との強調差が消え、押してほしい順序が読めなくなる
+    jimotoEl('div', { class: 'jimoto-links' }, [
+      jimotoEl('a', {
+        text: '設定',
+        href: '#',
+        onclick: (e) => {
+          e.preventDefault();
+          jimotoOpenOptions();
+        },
+      }),
+      cartLink,
+    ]),
   ]);
 
   syncVisibility();
@@ -202,6 +205,7 @@ async function run() {
   if (!site) return; // 対応サイト以外では何もしない
 
   const core = await loadCore();
+  jimotoCartKey = core.CART_KEY; // 以降 storage.onChanged がカートの変化を拾える
   const { isbn13, source } = core.extractIsbn({
     url: location.href,
     text: jimotoPageText(site),
