@@ -12,33 +12,11 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import { MAIL_OPENERS } from '../src/core/profile.js';
-
-const read = (relativePath) =>
-  readFileSync(new URL(`../${relativePath}`, import.meta.url), 'utf8');
-
-/**
- * コメントを落とす。**検査はコードに対して行う。**
- *
- * コメント込みで検査すると 2 つのことが起きる。(a) 守りたい形（`window.open(` や
- * `location.href =`）を説明に書き写した時点でテスト自身に引っかかる。
- * (b) 逆に「pickMailPlan を通している」等の肯定側は、コメントに名前が出るだけで
- * 満たされてしまう。どちらもテストの意味を壊すので、除去してから検査する。
- * ソース側に「この語を書くな」という制約を書き込むのは筋が悪い（前は
- * content-mail.js と app.js のヘッダにその注意書きが入っていた）。
- *
- * `(^|[^:])` は `https://` の `//` を守るためのもの。行コメントの `//` の直前は
- * 行頭か非コロン、URL の `//` の直前は必ず `:` になる。文字列リテラルの中に
- * `:` を伴わない `//` を書くと落ちるが（正規表現リテラルも同様）、対象 9 ファイルに
- * その形は無い。除去しすぎていないことは下の「除去後も検査対象が残る」で見る。
- */
-const stripComments = (source) => source
-  .replace(/\/\*[\s\S]*?\*\//g, '')
-  .replace(/(^|[^:])\/\/.*$/gm, '$1');
-
-/** 検査用に読む。コメントを落としたコードだけを返す */
-const readCode = (relativePath) => stripComments(read(relativePath));
+// 検査はコードに対して行う（ソース側に「この語を書くな」という制約を書き込むのは
+// 筋が悪い）。manifest.test.mjs も同じ readCode を使う。→ test/helpers/source.mjs
+import { read, readCode } from './helpers/source.mjs';
 
 const EXTENSION_DIR = new URL('../src/adapters/extension/', import.meta.url);
 

@@ -330,6 +330,98 @@ Chrome の履歴にも残る（同期していれば同期される）。
 CLAUDE.md の絶対前提 4 には、この 1 つを例外として明記してある
 （「これ以外の外部送信を増やすときは合意を取る」）。
 
+## バッジ（v0.4・2026-09-04）
+
+ツールバーアイコンに注文リストの中身を出す。ピン留めしていない利用者には
+見えないが（→ ロードマップの「カートへの導線」）、**「入れたことを忘れて
+二重に注文する」を防ぐのが目的**なので、見える人には常に見えている必要がある。
+
+### 数える単位は「点数」（`cart.length`）
+
+冊数の合計ではない。`src/core/cart.js` の `badgeText` が唯一の定義。
+
+- 既存の唯一の数表示 —— パネルのトースト「注文リストに追加（N点）」—— と揃う。
+  2 箇所で違う数を見せると、どちらが正しいのか利用者に判断できない
+- 「2 点・合計 7 冊」で `7` と出るバッジは、点数と読み違えられる
+- バッジは 4 文字程度で切られるので、合計冊数のような伸びうる数には向かない
+
+### 色は `--primary`、前景は白。**赤は使わない**
+
+`--primary: #1f6feb` / 前景 `#ffffff`。**`--destructive` は使わない。**
+カートに本が入っているのは正常な状態であって、エラーではない
+（→「トークン」の「エラーのみ `--destructive`」）。Chrome の既定バッジ色は赤なので、
+**色を毎回入れ直さないと再起動後に赤いバッジが出る**（下記のとおり色も
+セッションを越えて永続しない）。
+
+service worker は CSS を読めないので、色リテラルが JS に入るのは避けられない。
+`background.js` の `BADGE_BACKGROUND` / `BADGE_FOREGROUND` に定数として置き、
+`test/manifest.test.mjs` が content.css の `--primary` と**同値であること**、
+および `--destructive` の値を**含まないこと**を対で固定する。
+
+### 0 点は空文字で消す
+
+`badgeText([])` は `''` を返し、Chrome はバッジを消す。`'0'` を渡すと
+「0 という数のバッジ」が常駐して、空のリストが常に何かあるように見える。
+
+### 更新契機は `chrome.storage.onChanged` 1 本
+
+カートを書き込む経路は現在 3 つ（注入パネルの「注文リストに追加」・popup の
+冊数変更／削除・popup の送信後のクリア）で、すべて `chrome.storage.local` に
+落ちる。だから `onChanged` を 1 箇所で見れば全経路を拾える。
+
+メッセージ方式（各面が SW に「更新して」と送る）にしない。経路ごとに送信コードが
+要り、1 つ落とした時点で**バッジが黙ってズレる**（エラーは出ないので、
+気づくのは「入れたのに数が増えない」という利用者の報告からになる）。
+
+`changes[CART_KEY].newValue ?? []` を使い、`loadCart()` を呼び直さない。
+読み直すと storage への往復が増えるうえ、通知の値と読んだ値が食い違う窓ができる。
+`?? []` は remove / clear（`newValue` が `undefined` で通知される）のため。
+キーは `storage.js` の `CART_KEY` を import する（SW にリテラルを増やさない）。
+
+**定期更新（`setInterval` / `chrome.alarms`）はしない。** SW を無用に延命させる。
+
+### 再起動で消えるので `onStartup` / `onInstalled` で初期化する
+
+**MV3 の `chrome.action.*`（テキストと色）はブラウザセッションを越えて
+永続しない。** SW が idle で停止しただけならバッジは残るが、Chrome を再起動すると
+カートが残っていてもバッジだけ消える。両方の listener が必要:
+
+| 契機 | 拾えるもの | 拾えないもの |
+| --- | --- | --- |
+| `runtime.onStartup` | Chrome の再起動 | インストール・更新・拡張の再読み込み直後 |
+| `runtime.onInstalled` | インストール・更新・再読み込み | **Chrome の再起動** |
+
+どちらも取りこぼしはエラーを出さないので、片方を「重複」と見て消さないこと。
+
+### 権限は増えない
+
+`chrome.action.setBadgeText` / `setBadgeBackgroundColor` / `setBadgeTextColor` は
+manifest の `"action"` の宣言だけで呼べる。`permissions` は `["storage"]` のまま
+（`test/manifest.test.mjs` の `deepEqual` がこの調査結果の記録も兼ねている）。
+`setBadgeTextColor` だけ Chrome 110+ で、無い環境では前景色が既定のままになる。
+
+### service worker が module であること
+
+`background.js` は `core/storage.js` と `core/cart.js` を import するので
+`manifest.json` の `background.type: "module"` が必須。抜けると SW は起動時に
+`Cannot use import statement outside a module` で死に、**バッジだけでなく
+`onMessage`（設定画面を開く経路）も登録されない**。エラーは SW の DevTools に
+しか出ない。`npm run sync` を忘れた場合も `./core/*.js` の解決に失敗して同じ形で死ぬ。
+
+### 実機で確かめること
+
+Node のテストは chrome API を持たないので、以下は実機でしか確認できない。
+
+1. 0 点でバッジ無し（`0` が出ない）→ 追加で即 `1`
+2. 同じ本を再追加しても `1` のまま → 冊数を 5 にしても `1` のまま（点数）
+3. 削除・送信後のクリアで消える
+4. **Chrome を完全に終了して再起動してもバッジが復元する**（`onStartup`。
+   ここが一番腐りやすい）
+5. `chrome://extensions` で再読み込みしても復元する（`onInstalled`）
+6. 色が青、文字が白（Chrome の既定の赤になっていない）
+7. **SW の DevTools（`chrome://extensions` の「Service Worker」）にエラーが無い**
+   —— import の失敗はこれ以外に出口が無い
+
 ## UI / デザインシステム
 
 ### 基盤: shadcn/ui (zinc)
