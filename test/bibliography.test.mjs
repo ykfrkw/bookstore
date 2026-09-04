@@ -13,7 +13,7 @@ const FIXTURE = {
     publisher: '岩波書店',
     pubdate: '20240115',
     cover: 'https://cover.openbd.jp/9784003100011.jpg',
-    author: '山田太郎／著',
+    author: 'テスト 著者／著',
   },
   onix: {
     ProductSupply: {
@@ -28,7 +28,7 @@ test('openBD のレスポンスを Book に変換する', () => {
   const b = parseOpenBd(FIXTURE, '9784003100011');
   assert.equal(b.title, 'こころの科学');
   assert.equal(b.publisher, '岩波書店');
-  assert.equal(b.author, '山田太郎／著');
+  assert.equal(b.author, 'テスト 著者／著');
   assert.equal(b.price, 2860);
   assert.equal(b.isbn13, '9784003100011');
   assert.equal(b.source, 'openbd');

@@ -16,9 +16,17 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 
 const read = (relativePath) => readFileSync(path.join(REPO_ROOT, relativePath), 'utf8');
 
+/**
+ * 検査値をそのまま RegExp に埋めるとメール等に含まれる `.` が任意 1 文字として
+ * 効いてしまう。リテラルとして扱わせるためメタ文字を退避する
+ */
+const escapeForRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 /** `<input ... id="req-name" ... placeholder="…">` から placeholder を取り出す */
 function placeholderOf(html, attribute, value) {
-  const tag = html.match(new RegExp(`<input[^>]*${attribute}="${value}"[^>]*>`));
+  const tag = html.match(
+    new RegExp(`<input[^>]*${escapeForRegExp(attribute)}="${escapeForRegExp(value)}"[^>]*>`)
+  );
   assert.ok(tag, `${attribute}="${value}" の input が見つからない`);
   const placeholder = tag[0].match(/placeholder="([^"]*)"/);
   assert.ok(placeholder, `${attribute}="${value}" に placeholder が無い`);
@@ -27,7 +35,7 @@ function placeholderOf(html, attribute, value) {
 
 /** `affiliation: '', // 例: ○○大学 …` の「例」部分を取り出す */
 function exampleOf(source, field) {
-  const line = source.match(new RegExp(`${field}: '',\\s*// 例: (.+)`));
+  const line = source.match(new RegExp(`${escapeForRegExp(field)}: '',\\s*// 例: (.+)`));
   assert.ok(line, `${field} の「例:」コメントが見つからない`);
   return line[1].trim();
 }
@@ -69,17 +77,46 @@ test('ローカル版の placeholder が拡張版と同一文字列である', (
  * 検査する語をソースに直書きすると、このテストファイル自身が検査対象に
  * 含まれて必ずヒットしてしまう（自己参照で常に落ちる）。そのため文字コードから
  * 組み立てる（同じ理由で、どの語なのかもここに書かない）。順に、利用者本人の
- * 姓（漢字）・名（漢字）・姓の読み（ひらがな）・姓のローマ字表記。
+ * 姓（漢字）・名（漢字）・姓の読み（ひらがな）・名の読み（ひらがな）・
+ * 姓のローマ字表記・名のローマ字表記。
+ *
+ * 姓名は「漢字・読み・ローマ字」の 3 表記 × 姓名で 6 語を必ず揃える。1 語でも
+ * 欠けると、その表記だけが単独で戻ったときに黙って通ってしまう。
+ *
+ * GitHub アカウント名（子音だけの短縮形）は意図的に入れていない。README の
+ * リポジトリ URL に含まれており、CLAUDE.md が「LICENSE の著作権表示と README の
+ * リポジトリ URL は対象外」と宣言しているため。検査語に足すと README だけで
+ * CI が落ちる。善意で追加しないこと。
  */
 const FORBIDDEN_NAMES = [
   [0x53e4, 0x5ddd],
   [0x7531, 0x5df1],
   [0x3075, 0x308b, 0x304b, 0x308f],
+  [0x3086, 0x3046, 0x304d],
   [0x66, 0x75, 0x72, 0x75, 0x6b, 0x61, 0x77, 0x61],
+  [0x79, 0x75, 0x6b, 0x69],
 ].map((codes) => String.fromCharCode(...codes));
 
-/** LICENSE の著作権表示は本人を指すことに意味があるので対象外 */
-const EXCLUDED_FILES = ['LICENSE'];
+/**
+ * 著作権表示は本人を指すことに意味があるので対象外。拡張子の有無・種類を問わず
+ * 除外したいので、basename を大文字化して前方一致で判定する
+ * （`LICENSE` / `LICENSE.md` / `LICENSE.txt` をまとめて外す）
+ */
+const EXCLUDED_BASENAME_PREFIXES = ['LICENSE'];
+
+const isExcluded = (relativePath) => {
+  const basename = path.basename(relativePath).toUpperCase();
+  return EXCLUDED_BASENAME_PREFIXES.some((prefix) => basename.startsWith(prefix));
+};
+
+/**
+ * 検査はテキストだけを対象にする。アイコンの PNG まで utf8 で読むと、
+ * バイナリ列が偶然一致したときに理由の分からない偽陽性になる
+ */
+const TEXT_EXTENSIONS = new Set(['.js', '.mjs', '.html', '.css', '.json', '.md', '.txt']);
+
+const isTextFile = (relativePath) =>
+  TEXT_EXTENSIONS.has(path.extname(relativePath).toLowerCase());
 
 const SCANNED_DIRECTORIES = ['src', 'test', 'scripts', 'docs'];
 
@@ -88,16 +125,17 @@ function collectFiles(relativeDirectory) {
   if (!statSync(absolute, { throwIfNoEntry: false })?.isDirectory()) return [];
   return readdirSync(absolute, { withFileTypes: true }).flatMap((entry) => {
     const child = path.join(relativeDirectory, entry.name);
-    return entry.isDirectory() ? collectFiles(child) : [child];
+    if (entry.isDirectory()) return collectFiles(child);
+    return isTextFile(child) ? [child] : [];
   });
 }
 
 test('追跡対象のファイルに実在の人名が残っていない', () => {
   const rootFiles = readdirSync(REPO_ROOT, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+    .filter((entry) => entry.isFile() && isTextFile(entry.name))
     .map((entry) => entry.name);
   const targets = [...rootFiles, ...SCANNED_DIRECTORIES.flatMap(collectFiles)].filter(
-    (relativePath) => !EXCLUDED_FILES.includes(relativePath)
+    (relativePath) => !isExcluded(relativePath)
   );
   assert.ok(targets.length > 0, '検査対象が 0 件（走査条件が壊れている）');
 
