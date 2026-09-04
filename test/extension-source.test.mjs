@@ -20,6 +20,9 @@ const read = (relativePath) =>
 /** innerHTML を書く可能性のあるアダプタのファイル。core は DOM を触らない */
 const DOM_WRITING_SOURCES = [
   'src/adapters/extension/content.js',
+  'src/adapters/extension/content-sites.js',
+  'src/adapters/extension/content-ui.js',
+  'src/adapters/extension/content-mail.js',
   'src/adapters/extension/options.js',
   'src/adapters/extension/popup.js',
   'src/adapters/local/app.js',
@@ -58,9 +61,14 @@ test('innerHTML に変数を補間しているアダプタが無い', () => {
  * メール導線を持つ 3 面。どれも DOM / chrome API 依存で Node からは実行できない。
  * opener は「メーラーを開く」呼び出し。面ごとに手段が違う（拡張の content script は
  * window.open、popup は tabs.create、ローカル版は location.href）。
+ *
+ * content 側が content-mail.js なのは、下の「コピーが opener より前」が
+ * pickMailPlan( 以降を slice して index を比較する＝ pickMailPlan・
+ * clipboard.writeText・opener が同一ファイルにあることを前提にしているため。
+ * 送出シーケンスを別ファイルへ散らすとこのテストは green のまま意味を失う。
  */
 const MAIL_ADAPTERS = [
-  { path: 'src/adapters/extension/content.js', opener: /window\.open\(/ },
+  { path: 'src/adapters/extension/content-mail.js', opener: /window\.open\(/ },
   { path: 'src/adapters/extension/popup.js', opener: /chrome\.tabs\.create\(/ },
   { path: 'src/adapters/local/app.js', opener: /location\.href\s*=/ },
 ];

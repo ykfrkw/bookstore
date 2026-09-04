@@ -24,6 +24,12 @@ const extensionFileExists = (relativePath) =>
 
 const manifest = JSON.parse(readExtensionFile('manifest.json'));
 
+/** content_scripts で注入される js の相対パス（宣言順のまま） */
+const contentScriptFiles = manifest.content_scripts.flatMap((entry) => entry.js || []);
+
+/** 全 content script を 1 本の文字列として見る（型やリテラルの有無を見るとき用） */
+const contentScriptSource = () => contentScriptFiles.map(readExtensionFile).join('\n');
+
 test('background service worker が宣言され、ファイルが実在する', () => {
   // 無いと content script からの「設定を開く」sendMessage が
   // Receiving end does not exist で失敗する
@@ -72,30 +78,60 @@ test('permissions は storage だけ', () => {
   assert.deepEqual(manifest.permissions, ['storage']);
 });
 
-test('content.js は openOptionsPage を呼ばない', () => {
+test('content script のどのファイルも openOptionsPage を呼ばない', () => {
   // 拡張ページ専用 API で content script には存在せず、?.() で呼ぶと
   // 例外も出さず静かに no-op する（「設定を押しても何も起きない」の原因）。
   //
   // 守りたいのは「呼ばない」ことであって「名前を書かない」ことではない。
   // 名前ごと禁じると罠の説明が婉曲表現になり、一番読まれる場所から grep 可能な
   // 固有名詞が消えるので、呼び出し形 `openOptionsPage(` / `openOptionsPage?.(`
-  // だけを禁じる
-  const source = readExtensionFile('content.js');
-  assert.doesNotMatch(source, /openOptionsPage\s*(\?\.)?\s*\(/);
+  // だけを禁じる。
+  // content script は 4 ファイルに分かれているので、content.js だけを見ると
+  // 別ファイルに書かれた呼び出しを見逃す。宣言されている全ファイルを回す
+  for (const path of contentScriptFiles) {
+    assert.doesNotMatch(
+      readExtensionFile(path),
+      /openOptionsPage\s*(\?\.)?\s*\(/,
+      `${path}: content script では openOptionsPage は undefined`,
+    );
+  }
 });
 
-test('content.js と background.js のメッセージ型が一致する', () => {
+test('content script と background.js のメッセージ型が一致する', () => {
   // MV3 の制約で content script と service worker は定数を共有できず、型は
   // 2 ファイルに直書きになる。片方だけ改名すると npm test は green のまま、
   // 実機では毎回「設定画面を開けませんでした」が出る（元のバグに近い症状）。
-  // 対をテストで固定するのがその代わりの防波堤
+  // 対をテストで固定するのがその代わりの防波堤。
+  // 送信側がどのファイルにあっても良いよう、content script 全体を読み先にする
   const background = readExtensionFile('background.js');
   const messageType = background.match(/OPEN_OPTIONS\s*=\s*['"]([^'"]+)['"]/)?.[1];
   assert.ok(messageType, 'background.js から OPEN_OPTIONS の値を取り出せない');
   assert.ok(
-    readExtensionFile('content.js').includes(messageType),
-    `content.js が background.js のメッセージ型 ${messageType} を送っていない`,
+    contentScriptSource().includes(messageType),
+    `content script が background.js のメッセージ型 ${messageType} を送っていない`,
   );
+});
+
+test('content_scripts.js が期待した順序で宣言されている', () => {
+  // classic script の 4 分割はトップレベル宣言の共有で成立している。
+  // 定義より前に使う順序（例: content.js が先）にすると JIMOTO_SITES の参照が
+  // TDZ で落ち、run() の catch に飲まれて「パネルが出ない」だけが残る。
+  // 「manifest の参照先が実在する」テストは配列から抜けても素通りするので、
+  // 抜け・並び替えの両方をここで受け止める
+  assert.deepEqual(manifest.content_scripts[0].js, [
+    'content-sites.js',
+    'content-ui.js',
+    'content-mail.js',
+    'content.js',
+  ]);
+});
+
+test('JIMOTO_SITES の定義と参照が対になっている', () => {
+  // ファイル間の契約はグローバル 1 個ぶんの名前だけで成立していて、
+  // 片方を改名しても構文エラーにならない（実行時に undefined になるだけ）。
+  // 定義側と参照側を対で固定する。接頭 JIMOTO_ / jimoto はこの grep 可能性のため
+  assert.match(readExtensionFile('content-sites.js'), /JIMOTO_SITES\s*=/);
+  assert.match(readExtensionFile('content.js'), /JIMOTO_SITES/);
 });
 
 test('background.js は onMessage listener をトップレベルで同期登録する', () => {

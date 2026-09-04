@@ -37,6 +37,10 @@ src/core/                環境非依存のロジック。ここに副作用と 
   compose.js             注文メールの組み立て（本体）
   storage.js             chrome.storage / localStorage の抽象化
 src/adapters/extension/  Chrome 拡張（MV3）
+  content-sites.js       JIMOTO_SITES（サイト別セレクタ）・jimotoPageText
+  content-ui.js          jimotoUrl / jimotoEl / jimotoToast / jimotoInjectPanelStyle
+  content-mail.js        jimotoMakeMailActions（メール送出とコピー）
+  content.js             パネルの組み立て・差し込み・URL 監視。attachShadow はここ
 src/adapters/local/      ローカル単体ページ（同じ core を相対 import）
 scripts/sync-core.mjs    core を拡張ディレクトリへコピー（拡張は上位を参照できないため）
 test/                    node:test。ネットワークに触らないこと
@@ -63,7 +67,24 @@ npm run build     # dist/bookstore-<version>.zip を作る
 - **`src/core/` を編集したら `npm run sync` を走らせる。** 忘れると拡張だけ
   古いコードで動き、原因の分かりにくいバグになる。`src/adapters/extension/core/`
   は生成物なので直接編集しない。
-- **DOM セレクタは 1 箇所に集める。** `content.js` の `SITES` 配列以外に
+- **content script は 4 ファイルで、順序に意味がある。** `manifest.json` の
+  `content_scripts[0].js` は
+  `content-sites.js` → `content-ui.js` → `content-mail.js` → `content.js` の順。
+  ESM ではなく classic script なので、各ファイルのトップレベル宣言が同じ
+  isolated world で共有される（`import` 文は無い）。**順序を変えると
+  `JIMOTO_SITES` の参照が TDZ で落ち、`run()` の catch に飲まれて「パネルが
+  出ない」だけが残る。** 並び順は `test/manifest.test.mjs` が `deepEqual` で
+  固定してある。ファイル間の契約は grep できるように `JIMOTO_` / `jimoto`
+  接頭で統一する（`el` のような裸の名前を新しく足さない）。
+  分割を `chrome.runtime.getURL` + 動的 `import()` に変えないこと。分割した
+  全ファイルを `web_accessible_resources` に載せる必要が生じ、パネルを
+  closed shadow root に閉じて露出を絞る設計に逆行する。
+- **`attachShadow` は `content.js` に置く。** `test/extension-source.test.mjs` の
+  closed shadow の検査が `content.js` を読み先にしている。
+- **メール送出の 3 手（`pickMailPlan` → `clipboard.writeText` → メーラーを開く）は
+  `content-mail.js` に閉じる。** 順序テストが `pickMailPlan(` 以降を slice して
+  index を比較するため、別ファイルに散らすとテストは green のまま意味を失う。
+- **DOM セレクタは 1 箇所に集める。** `content-sites.js` の `JIMOTO_SITES` 以外に
   対応サイトのセレクタを散らさない。各サイトの DOM は予告なく変わる前提で、
   壊れたら該当サイトのエントリを直すだけで済む状態を保つ。
 - **文面は `profile.templates` 経由で差し替え可能にする。** 生協の決まり文句を
