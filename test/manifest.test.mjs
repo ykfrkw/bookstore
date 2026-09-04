@@ -13,11 +13,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { cssTokenValue, readCode } from './helpers/source.mjs';
 
 const EXTENSION_DIR = new URL('../src/adapters/extension/', import.meta.url);
 
 const readExtensionFile = (relativePath) =>
   readFileSync(new URL(relativePath, EXTENSION_DIR), 'utf8');
+
+/** コメントを落とした拡張ファイル（「書いてはいけない値」を見る検査で使う） */
+const readExtensionCode = (relativePath) =>
+  readCode(`src/adapters/extension/${relativePath}`);
 
 const extensionFileExists = (relativePath) =>
   existsSync(new URL(relativePath, EXTENSION_DIR));
@@ -198,35 +203,38 @@ test('background.js はカートのキーを core から import する', () => {
   // SW は `chrome.storage.onChanged` の changes からカートを拾うのでキー文字列が
   // 要る。リテラルで書くと storage.js と 2 箇所になり、片方だけ直した時点で
   // onChanged が一致しなくなって**バッジが黙って止まる**（エラーは出ない）
-  const background = readExtensionFile('background.js');
-  assert.match(background, /^import .* from '\.\/core\//m);
+  assert.match(readExtensionFile('background.js'), /^import .* from '\.\/core\//m);
+  // 「直書きしない」はコードに対する制約。コメント込みで見ると、CART_KEY の
+  // 由来を説明するのに値を書けなくなり、注意書きが婉曲表現になる（PR7 と同じ話）
   assert.ok(
-    !background.includes("'bookstore.cart'"),
+    !readExtensionCode('background.js').includes("'bookstore.cart'"),
     "background.js に 'bookstore.cart' を直書きしない（core/storage.js の CART_KEY を import する）",
   );
 });
 
 /**
- * content.css からトークンの値を抜く。
+ * バッジの色に関する 2 つのテストは**ドリフト検知**であって、実値の固定ではない。
  *
- * SW は CSS を読めないので、バッジの色リテラルが JS に入るのは避けられない。
- * せめて「CSS の値と対であること」をテストで固定する。
- * 2 つのテストに分けてあるのは、色を間違えたときに**両方**が落ちてほしいため
+ * - ここ（source テスト）… `background.js` の定数が `content.css` のトークンと
+ *   ズレていないか。SW は CSS を読めないのでリテラルの重複が避けられず、
+ *   その 2 箇所が離れていくのを見る
+ * - `test/background.test.mjs`（behavior テスト）… `setBadgeBackgroundColor` に
+ *   **実際に渡る値**を deepEqual で固定する。守っているのはこちら
+ *
+ * source テストだけでは守れない。正規表現は最初の 1 件しか見ないので、
+ * 定数を残したまま `setBadgeBackgroundColor` に別色を直書きする形や、
+ * 定数を 2 箇所に書く形は素通りする。**source テストを厚くしてこれを塞ごうと
+ * しないこと**（ソースの書き方に対する制約が増えるだけで、呼び出し引数を
+ * 見ている behavior テストの方が安く確実）。
+ *
+ * 2 つに分けてあるのは、色を間違えたときに**両方**が落ちてほしいため
  * （1 つにまとめると最初の assert で止まり、「赤を使っていないか」は
  * 検査されないまま終わる）。
  */
-const cssTokenValue = (name) =>
-  readExtensionFile('content.css')
-    .match(new RegExp(`--${name}:\\s*([^;]+);`))?.[1]
-    ?.trim();
-
 test('バッジの背景色が content.css の --primary と同値', () => {
-  // 「含む」ではなく**定数に代入された値**を見る。`includes` だけだと、
-  // 色を変えてもコメントに書かれた元の値が一致して green のまま通ってしまう
-  // （実際にそうなった。壊して確認したときに 1 本しか落ちなくて気づいた）
   const primary = cssTokenValue('primary');
   assert.ok(primary, 'content.css から --primary の値を取り出せない');
-  const declared = readExtensionFile('background.js').match(
+  const declared = readExtensionCode('background.js').match(
     /BADGE_BACKGROUND\s*=\s*['"]([^'"]+)['"]/,
   )?.[1];
   assert.equal(declared, primary, `バッジの背景色が --primary (${primary}) と一致しない`);
@@ -234,11 +242,12 @@ test('バッジの背景色が content.css の --primary と同値', () => {
 
 test('バッジに --destructive の色を使わない', () => {
   // 赤はエラー専用（SPEC「トークン」/「バッジ」）。カートに本が入っているのは
-  // 正常な状態なので、エラー色で出すと「壊れた」と読まれる
+  // 正常な状態なので、エラー色で出すと「壊れた」と読まれる。
+  // コメントを落としてから見るので、background.js は色の話を値つきで書ける
   const destructive = cssTokenValue('destructive');
   assert.ok(destructive, 'content.css から --destructive の値を取り出せない');
   assert.ok(
-    !readExtensionFile('background.js').includes(destructive),
+    !readExtensionCode('background.js').includes(destructive),
     `バッジに --destructive (${destructive}) を使わない（赤はエラー専用）`,
   );
 });

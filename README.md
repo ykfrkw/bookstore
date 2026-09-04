@@ -141,6 +141,11 @@ npm run local     # ローカル版を http://localhost:8787 で開く
 npm run build     # dist/bookstore-<version>.zip
 ```
 
+`npm test` は先に sync を走らせます（`src/adapters/extension/core/` を書き換える
+＝読み取り専用のコマンドではありません）。拡張の service worker のテストが
+生成物を import するためです。sync は atomic なので `npm run dev` を回したまま
+テストしても、テストを並行させても衝突しません。
+
 ソースから拡張として読み込む場合は、`npm run sync` のあと
 `chrome://extensions` で **`src/adapters/extension`** を指定します。
 

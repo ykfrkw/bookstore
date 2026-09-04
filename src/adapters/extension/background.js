@@ -23,11 +23,11 @@ const OPEN_OPTIONS = 'jimoto:open-options';
  * `--primary: #1f6feb` / `--primary-foreground: #fff`。
  *
  * service worker は CSS を読めないのでリテラルの重複は避けられない。
- * 代わりに `test/manifest.test.mjs` が content.css から `--primary` の値を抜いて
- * このファイルに含まれることを確認し、あわせて `--destructive` の値を
- * **含まない**ことも確認している（SPEC の「赤はエラー専用」。カートに本が
- * 入っているのは正常な状態であって、エラーではない。値そのものはここに
- * 書けない —— 書くとその対テストが落ちる。content.css を見ること）。
+ * ズレは `test/manifest.test.mjs` が content.css から値を抜いて見ている。
+ *
+ * **`--destructive: #dc2626`（赤）は使わない。** 赤はエラー専用
+ * （SPEC「トークン」/「バッジ」）で、カートに本が入っているのは正常な状態。
+ * エラー色で出すと「拡張が壊れた」と読まれる。
  */
 const BADGE_BACKGROUND = '#1f6feb';
 const BADGE_FOREGROUND = '#ffffff';
@@ -58,10 +58,16 @@ async function refreshBadge() {
 }
 
 /**
- * メッセージ型 → 処理。マップにしてあるのは型がこの先増えるため
- * （増えるたびに if を足すと、応答忘れ・`return true` 忘れが混ざりやすい）。
+ * メッセージ型 → 処理。マップにしてあるのは型がこの先増えるため。
+ * **これが防いでいるのは型の分岐漏れだけ**（未知の型に応答しない判定を
+ * `Object.hasOwn` 1 箇所に寄せられる）。`return true` と sendResponse の
+ * 責務は各 handler に残るので、そこはマップにしても構造的には防げていない。
  *
  * 各 handler は onMessage と同じ規約で、`true` を返すと非同期に sendResponse する。
+ *
+ * 呼び出しは `HANDLERS[type](message, sendResponse)` で、**`sender` は渡していない**。
+ * 今ある型はどれも送信元を見ないので足していない（YAGNI）。将来 tab id が要る型
+ * （例: カートのタブを開く）を足すときは、ここのシグネチャを変える必要がある。
  */
 const HANDLERS = {
   [OPEN_OPTIONS]: (_message, sendResponse) => {

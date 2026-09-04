@@ -21,6 +21,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
+import { cssTokenValue } from './helpers/source.mjs';
 
 const EXTENSION_DIR = new URL('../src/adapters/extension/', import.meta.url);
 const BACKGROUND = new URL('background.js', EXTENSION_DIR);
@@ -63,7 +64,13 @@ function makeChromeStub({ cart = [] } = {}) {
       },
       runtime: {
         lastError: undefined,
-        openOptionsPage: (callback) => callback(),
+        // 呼び出しを記録する。handler が openOptionsPage を呼ばずに
+        // sendResponse({ ok: true }) だけ返す形でも応答の形は同じなので、
+        // 「実際に設定画面を開こうとしたか」は履歴でしか見られない
+        openOptionsPage: (callback) => {
+          calls.push(['openOptionsPage']);
+          callback();
+        },
         onMessage: { addListener: (fn) => (listeners.onMessage = fn) },
         onStartup: { addListener: (fn) => (listeners.onStartup = fn) },
         onInstalled: { addListener: (fn) => (listeners.onInstalled = fn) },
@@ -126,10 +133,22 @@ async function withChrome(options, run) {
 /** listener が `void refreshBadge()` で投げた非同期処理の完了を待つ */
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-/** バッジ 1 回ぶんの期待値（色は毎回入れ直す。詳細は SPEC「バッジ」） */
+/**
+ * バッジ 1 回ぶんの期待値（色は毎回入れ直す。詳細は SPEC「バッジ」）。
+ *
+ * **実値を固定しているのはここ。** 背景色は content.css の `--primary` から
+ * 導出する。テストに 3 つ目のリテラルを置くと、ブランド色を変えたときに
+ * 「実装は正しいのにテストだけ落ちる」状態になる。
+ * 前景は `--primary-foreground: #fff` と表記が違うだけなので導出しない
+ * （`#fff` / `#ffffff` の正規化をテストに持ち込む価値が無い）。
+ *
+ * manifest.test.mjs 側の色テストは CSS とのドリフト検知で、実値は見ていない
+ * （正規表現は最初の 1 件しか見ないので、定数を残して呼び出しに別色を
+ * 直書きする形は素通りする）。実際に守っているのはこの deepEqual。
+ */
 const badgeCalls = (text) => [
   ['setBadgeText', { text }],
-  ['setBadgeBackgroundColor', { color: '#1f6feb' }],
+  ['setBadgeBackgroundColor', { color: cssTokenValue('primary') }],
   ['setBadgeTextColor', { color: '#ffffff' }],
 ];
 
@@ -144,6 +163,12 @@ test('トップレベルで 4 つの listener が登録される', () => {
     'onMessage',
     'onStartup',
   ]);
+  // トップレベルでバッジを触ってはいけない。SW は idle 停止から onMessage や
+  // onChanged で起き直すたびにトップレベルを再実行するので、たとえば
+  // 「起動時にも初期化しよう」と `applyBadge([])` を足すと、**カートが空でない
+  // のにバッジが一瞬消えて次のカート変更まで戻らない**。エラーは出ず、
+  // 上の listener 検査も manifest 側の行頭一致も削除しか見ないので通ってしまう
+  assert.deepEqual(boot.calls, [], 'import しただけで chrome.action を呼んではいけない');
 });
 
 test('onChanged(local): カートの点数と色をバッジに入れる', async () => {
@@ -200,7 +225,7 @@ test('onInstalled: storage を読んで点数を復元する', async () => {
 });
 
 test('onMessage: 既知の型は true を返して非同期に応答する', async () => {
-  await withChrome({}, async () => {
+  await withChrome({}, async ({ calls }) => {
     const responses = [];
     const result = boot.listeners.onMessage(
       { type: 'jimoto:open-options' },
@@ -214,6 +239,10 @@ test('onMessage: 既知の型は true を返して非同期に応答する', asy
     // 応答は { ok, error }。lastError が無いので ok: true / error: undefined
     assert.equal(responses[0].ok, true);
     assert.equal(responses[0].error, undefined);
+    // 応答の形だけを見ると、handler が openOptionsPage を呼ばずに
+    // sendResponse({ ok: true }) だけ返す形でも通る（＝設定画面が開かないのに
+    // 「開きました」と応答する）。実際に代理実行したことまで見る
+    assert.deepEqual(calls, [['openOptionsPage']], 'openOptionsPage を呼んでいない');
   });
 });
 

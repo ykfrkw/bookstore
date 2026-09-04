@@ -58,11 +58,20 @@ test/                    node:test。ネットワークに触らないこと
 ## 開発コマンド
 
 ```bash
-npm test          # node:test。ネットワーク不要
+npm test          # sync → node:test。ネットワーク不要
 npm run dev       # core の変更を拡張ディレクトリへ自動同期
 npm run local     # ローカル版を http://localhost:8787 で開く
 npm run build     # dist/bookstore-<version>.zip を作る
 ```
+
+**`npm test` は副作用を持つ。** 先に `sync-core.mjs` を走らせて
+`src/adapters/extension/core/` を書き換える（`test/background.test.mjs` が
+service worker を実際に import し、その import 先が生成物なので）。
+`sync-core.mjs` のコピーは tmp + `rename` で atomic にしてあるので、
+`npm run dev`（watch）を回したまま `npm test` しても、`npm test` を並行
+させても壊れない。**`cp()` に戻さないこと**（`cp` は destination を unlink して
+から書くので、同時実行で `ENOENT: unlink ...core/*.js` になる。文面は
+「core が壊れた」に見えて原因に辿り着きにくい）。
 
 拡張の読み込み: `npm run sync` のあと、Chrome の
 `chrome://extensions` →「パッケージ化されていない拡張機能を読み込む」で
