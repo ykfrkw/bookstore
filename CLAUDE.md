@@ -37,6 +37,10 @@ src/core/                環境非依存のロジック。ここに副作用と 
   compose.js             注文メールの組み立て（本体）
   storage.js             chrome.storage / localStorage の抽象化
 src/adapters/extension/  Chrome 拡張（MV3）
+  content-sites.js       JIMOTO_SITES（サイト別セレクタ）・jimotoPageText
+  content-ui.js          jimotoUrl / jimotoEl / jimotoToast / jimotoInjectPanelStyle
+  content-mail.js        jimotoMakeMailActions（メール送出とコピー）
+  content.js             パネルの組み立て・差し込み・URL 監視。attachShadow はここ
 src/adapters/local/      ローカル単体ページ（同じ core を相対 import）
 scripts/sync-core.mjs    core を拡張ディレクトリへコピー（拡張は上位を参照できないため）
 test/                    node:test。ネットワークに触らないこと
@@ -63,7 +67,47 @@ npm run build     # dist/bookstore-<version>.zip を作る
 - **`src/core/` を編集したら `npm run sync` を走らせる。** 忘れると拡張だけ
   古いコードで動き、原因の分かりにくいバグになる。`src/adapters/extension/core/`
   は生成物なので直接編集しない。
-- **DOM セレクタは 1 箇所に集める。** `content.js` の `SITES` 配列以外に
+- **content script は 4 ファイルで、順序に意味がある。** `manifest.json` の
+  `content_scripts[0].js` は
+  `content-sites.js` → `content-ui.js` → `content-mail.js` → `content.js` の順。
+  ESM ではなく classic script なので、各ファイルのトップレベル宣言が同じ
+  isolated world で共有される（`import` 文は無い）。**順序を変えると
+  `ReferenceError: JIMOTO_SITES is not defined` で落ち、`run()` の catch に
+  飲まれて「パネルが出ない」だけが残る。** これは TDZ ではない（TDZ は 1 つの
+  script の中の現象。別々の classic script は自分自身の instantiation で束縛を
+  作るので、`content.js` が先に走った時点では束縛がまだ存在しない）。
+  **しかもこの失敗は間欠的。** `tick()` は `run()` より先に `lastHref` を
+  更新するので同じ URL では再試行せず、URL が変われば（その時点では全ファイルが
+  ロード済みなので）成功する。つまり静的なページロードでは永久にパネルが
+  出ないが、Amazon の SPA 遷移では 2 つ目の URL から出る。「常に出ない」より
+  debug が難しいので、症状から原因に戻れるようにここに書いておく。
+  並び順は `test/manifest.test.mjs` が `deepEqual` で固定してある。
+  **新しい content script を足したら `manifest.json` の配列にも必ず足す。**
+  置いただけで宣言し忘れると注入されず、そこで定義した `jimoto*` は呼び出し時に
+  `undefined` になって同じ「静かに出ない」に落ちる（実体 → 宣言の向きも
+  `test/manifest.test.mjs` が見ている）。**ファイル名は `content-*.js`** に
+  すること。2 つのテストが `content*.js` で実体を拾うので、別名にすると
+  宣言漏れと open shadow のどちらも検査から外れる。
+  ファイル間の契約は grep できるように `JIMOTO_` / `jimoto`
+  接頭で統一する（`el` のような裸の名前を新しく足さない）。
+  ただし `content.js` は分割前からの裸のグローバルを既に持っている:
+  **`PANEL_ID` / `loadCore` / `openOptions` / `clampQty` / `buildPanel` /
+  `mount` / `run` / `tick` / `lastHref`**（改名はしない。churn が大きく利益が
+  小さい）。全ファイルが同じ字句環境を共有するので、別ファイルでこの 9 個を
+  再宣言すると `SyntaxError: Identifier 'mount' has already been declared` で
+  そのファイルの注入が丸ごと死ぬ。新しく書くときはこの一覧を避けること。
+  分割を `chrome.runtime.getURL` + 動的 `import()` に変えないこと。分割した
+  全ファイルを `web_accessible_resources` に載せる必要が生じ、パネルを
+  closed shadow root に閉じて露出を絞る設計に逆行する。
+- **`attachShadow` は `content.js` に置き、`mode: 'closed'` 以外を書かない。**
+  `test/extension-source.test.mjs` は肯定側（`closed` がある）を `content.js` で、
+  否定側（`open` が無い）を `content*.js` 全ファイルで見ている。2 枚目のパネルや
+  ダイアログを別ファイルに足すときも `open` を書かないこと（`open` だと
+  ホストページから `host.shadowRoot` 経由で宛先ラベルと科研費の課題番号が読める）。
+- **メール送出の 3 手（`pickMailPlan` → `clipboard.writeText` → メーラーを開く）は
+  `content-mail.js` に閉じる。** 順序テストが `pickMailPlan(` 以降を slice して
+  index を比較するため、別ファイルに散らすとテストは green のまま意味を失う。
+- **DOM セレクタは 1 箇所に集める。** `content-sites.js` の `JIMOTO_SITES` 以外に
   対応サイトのセレクタを散らさない。各サイトの DOM は予告なく変わる前提で、
   壊れたら該当サイトのエントリを直すだけで済む状態を保つ。
 - **文面は `profile.templates` 経由で差し替え可能にする。** 生協の決まり文句を

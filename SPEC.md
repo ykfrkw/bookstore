@@ -312,7 +312,31 @@ Amazon 等のページ上で動く任意のスクリプトが
 `storage.js` だけが環境を判定する（`chrome.storage` → `localStorage` →
 メモリ）。それ以外の core は完全に純粋。
 
-サイト別の DOM セレクタは `content.js` の `SITES` 配列 1 箇所に集める。
+拡張の content script は 4 ファイルに分かれている。`manifest.json` の
+`content_scripts[0].js` に
+`content-sites.js` → `content-ui.js` → `content-mail.js` → `content.js` の順で
+並べた **classic script** で、ESM ではないためトップレベル宣言を同じ
+isolated world で共有する（ファイル間の `import` 文は無い。契約は
+`JIMOTO_` / `jimoto` 接頭で grep する）。順序を変えると `JIMOTO_SITES` の参照が
+`ReferenceError: JIMOTO_SITES is not defined` で落ちてパネルが静かに出なくなる
+（TDZ ではない。別々の classic script は自分自身の instantiation で束縛を作るので、
+`content.js` が先に走った時点では束縛がまだ存在しない）。しかも失敗は間欠的で、
+`tick()` が `run()` より先に `lastHref` を更新するため同じ URL では再試行せず、
+URL が変われば全ファイルがロード済みなので成功する——静的なページロードでは
+永久に出ないが、SPA 遷移では 2 つ目の URL から出る。並び順と、実在する
+`content*.js` が全部宣言されていることは `test/manifest.test.mjs` が
+固定してある。動的 `import()` で分割しないのは、分割した全ファイルを
+`web_accessible_resources` に載せることになり、「注入パネルは closed shadow DOM に
+閉じる」方針に逆行するため。
+
+| ファイル | 持ち物 |
+| --- | --- |
+| `content-sites.js` | `JIMOTO_SITES`（サイト別セレクタ）・`jimotoPageText` |
+| `content-ui.js` | `jimotoUrl` / `jimotoEl` / `jimotoToast` / `jimotoInjectPanelStyle` |
+| `content-mail.js` | `jimotoMakeMailActions` —— `pickMailPlan` → コピー → メーラーの 3 手 |
+| `content.js` | パネルの組み立てと差し込み、URL 監視、`attachShadow` |
+
+サイト別の DOM セレクタは `content-sites.js` の `JIMOTO_SITES` 1 箇所に集める。
 各サイトの DOM は予告なく変わる前提で、壊れたら該当エントリだけ直せば済む状態を保つ。
 
 ## データモデル
