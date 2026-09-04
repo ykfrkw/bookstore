@@ -38,12 +38,13 @@ function showMessage(text, kind = 'error') {
 /**
  * URL を新しいタブで開く。**この面は必ず新しいタブで開く。**
  *
- * 以前は plan.open を `location.href` へ代入していた（代入の形はテストが禁じて
- * いるので書き写さない）。Gmail が mailto のハンドラだと今のタブが Gmail に
- * 置き換わり、本文 textarea の手編集が消える。押下時点の textarea から mailto を
- * 組み直す設計なので、編集が消えるのは機能の否定になる。
+ * 以前は `location.href = plan.open` としていた。Gmail が mailto のハンドラだと
+ * 今のタブが Gmail に置き換わり、本文 textarea の手編集が消える。押下時点の
+ * textarea から mailto を組み直す設計なので、編集が消えるのは機能の否定になる。
  * 代わりに新しいタブで開く以上「開けたか」は推定できない（自分が作ったタブでも
  * visibility は変わる）ので、**この面は推定を置かず Gmail を常設にする**。
+ * remove を finally に置くのは、この面の anchor が light DOM にあるため
+ * （click が throw すると、href に下書きを載せた anchor がページに残る）。
  */
 function openMailUrl(url) {
   const link = document.createElement('a');
@@ -52,8 +53,7 @@ function openMailUrl(url) {
   link.rel = 'noopener';
   link.style.display = 'none';
   document.body.append(link);
-  link.click();
-  link.remove();
+  try { link.click(); } finally { link.remove(); }
 }
 
 function renderList() {

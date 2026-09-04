@@ -31,10 +31,14 @@ export const MAIL_LEAVE_TIMEOUT_MS = 1200;
 /**
  * Gmail の作成画面（compose）の URL を組む。
  *
- * `view=cm&fs=1` が作成画面のフルスクリーン表示。`/u/0/` は 1 つ目の
- * ログイン中アカウント。複数アカウントの利用者では意図と違うアカウントに
- * なりうるが、アカウント番号を当てる手段が無いので既定に寄せる
- * （開いた画面で切り替えられる。送信前に人が必ず確認する前提）。
+ * `view=cm&fs=1` が作成画面のフルスクリーン表示。
+ *
+ * **`/u/0/`（1 つ目のログイン中アカウント）は付けない。** 付けると、個人の
+ * Google がアカウント 0・大学の Google がアカウント 1 という利用者で、所属と
+ * 科研費の課題番号を載せた下書きが**個人アカウントの作成画面**に開く。
+ * 気づかずに送ると個人アドレスから大学の発注メールが飛ぶ。アカウント番号を
+ * 当てる手段は無いので、番号を落として Google 側の「最後に使ったアカウント」に
+ * 解決させる（利用者の意図に近い。送信前に人が必ず確認する前提）。
  *
  * **エンコードは URLSearchParams の 1 回だけ。** mailto の本文を
  * `encodeURIComponent` 済みの文字列として渡すと二重エンコードになり、
@@ -46,7 +50,7 @@ export function buildGmailCompose({ to, cc = '', subject = '', body = '' }) {
   if (cc) query.set('cc', cc);
   if (subject) query.set('su', subject);
   if (body) query.set('body', body);
-  return `https://mail.google.com/mail/u/0/?${query.toString()}`;
+  return `https://mail.google.com/mail/?${query.toString()}`;
 }
 
 /**
@@ -63,10 +67,30 @@ export function buildGmailCompose({ to, cc = '', subject = '', body = '' }) {
  * `opener` が 'gmail' 以外のときは **plan.open をそのまま返す**。
  * mailto の URL を UI 側で組み直すと、3 段階（フル版 / 簡略版 / ヘッダのみ）の
  * 判定が pickMailPlan と二重実装になり、長さの判定が面ごとにズレる。
+ *
+ * **`newTab` を読むのはパネル（content-mail.js）だけ。** popup は
+ * `chrome.tabs.create`、ローカル版は `target="_blank"` 固定で、どちらも構造的に
+ * 常に新しいタブになるため、この値を見る必要が無い（＝見ていない）。
  */
 export function resolveMailTarget({ plan, opener = 'auto', keepPage = false }) {
   if (opener !== 'gmail') {
-    return { url: plan.open, via: 'mailto', newTab: Boolean(keepPage) };
+    return {
+      url: plan.open,
+      via: 'mailto',
+      // **推定をしない場面では現在のタブを犠牲にしない。**
+      // `auto` で target を付けないのは推定を成立させるためだけの制約
+      // （target="_blank" を付けると自分が作った新タブで visibility が変わり、
+      // mailto が不発でも「開けた」と誤判定して looksUnopened が死ぬ）。
+      // `mailto` に固定した時点で推定はしない（looksUnopened が真になるのは
+      // opener === 'auto' のときだけ）ので、制約を守る理由も無くなる。
+      // web ハンドラ（Gmail 等）を登録している利用者は、固定モードにすれば
+      // 見ていた書籍ページが現在のタブに残る。
+      //
+      // 代償: 固定モードで **OS のメーラー**を使っている利用者には、
+      // `mailto:` ＋ target="_blank" の既知の挙動で空白タブが残りうる。
+      // 固定は明示的な選択であり、既定の `auto`（target なし）は汚さない。
+      newTab: opener === 'mailto' || Boolean(keepPage),
+    };
   }
   const draft = plan.draft || {};
   return {

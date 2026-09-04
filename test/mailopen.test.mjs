@@ -36,7 +36,11 @@ test('buildGmailCompose は作成画面の URL を組む', () => {
     subject: '件名',
     body: '本文',
   });
-  assert.ok(url.startsWith('https://mail.google.com/mail/u/0/?'));
+  assert.ok(url.startsWith('https://mail.google.com/mail/?'), url);
+  // `/u/0/` は付けない。個人 Google がアカウント 0、大学 Google が 1 の利用者で、
+  // 所属と科研費の課題番号を載せた下書きが個人アカウントの作成画面に開く。
+  // 番号を落とすと Google 側が「最後に使ったアカウント」に解決する
+  assert.ok(!url.includes('/u/0/'), url);
   const query = new URL(url).searchParams;
   assert.equal(query.get('view'), 'cm');
   assert.equal(query.get('fs'), '1');
@@ -112,15 +116,37 @@ test('gmail × コピー経路は body を載せない', () => {
   assert.equal(plan.copyText, plan.draft.body);
 });
 
-test('newTab は gmail のとき、または keepPage のときだけ真', () => {
+test('newTab が偽になるのは auto のときだけ', () => {
   const plan = planOf('compact');
+  // auto は推定をする＝ target を付けられない。自分が作った新タブでも
+  // visibility が変わるので、付けると mailto の不発を「開けた」と誤判定する
   assert.equal(resolveMailTarget({ plan, opener: 'auto' }).newTab, false);
-  assert.equal(resolveMailTarget({ plan, opener: 'mailto' }).newTab, false);
+  assert.equal(resolveMailTarget({ plan }).newTab, false);
   // Gmail はページ遷移なので、今のタブを潰さないよう必ず新しいタブ
   assert.equal(resolveMailTarget({ plan, opener: 'gmail' }).newTab, true);
   // keepPage はローカル版（手編集した本文が画面にある面）が渡す
   assert.equal(resolveMailTarget({ plan, opener: 'auto', keepPage: true }).newTab, true);
   assert.equal(resolveMailTarget({ plan, opener: 'gmail', keepPage: true }).newTab, true);
+});
+
+test("opener を 'mailto' に固定した場合は新しいタブで開く", () => {
+  // 固定モードでは推定をしない（looksUnopened が真になるのは auto のときだけ）。
+  // 推定しないなら target なしを守る理由が無く、現在のタブを犠牲にする必要も無い。
+  // web ハンドラ（Gmail 等）を登録している利用者は、固定にすれば書籍ページが残る
+  const plan = planOf('compact');
+  for (const mode of ['full', 'compact', 'copy']) {
+    const target = resolveMailTarget({ plan: planOf(mode), opener: 'mailto' });
+    assert.equal(target.newTab, true, mode);
+  }
+  // 既存の不変条件を壊していないこと: URL は plan.open の一字も変えない
+  const target = resolveMailTarget({ plan, opener: 'mailto' });
+  assert.equal(target.url, plan.open);
+  assert.equal(target.via, 'mailto');
+  // 推定は二重に無効化されるだけ（opener でも newTab でも偽）。挙動は変わらない
+  assert.equal(
+    looksUnopened({ opener: 'mailto', via: target.via, newTab: target.newTab, leftPage: false }),
+    false,
+  );
 });
 
 test('looksUnopened が真になるのは 1 通りだけ', () => {

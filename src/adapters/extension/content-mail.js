@@ -1,14 +1,13 @@
 /**
  * パネルのメール送出とコピー。content script の 3 ファイル目。
  *
- * **メール送出のシーケンス（pickMailPlan → クリップボード → メーラーを開く）は
+ * **メール送出のシーケンス（pickMailPlan() → クリップボード → メーラーを開く）は
  * このファイルに閉じる。** test/extension-source.test.mjs の「コピーが opener より
- * 前」は pickMailPlan の呼び出し位置から後方を slice して index を比較しているため、
- * 3 つが同一ファイルにあることが前提になっている。別ファイルに散らすとテストは
- * green のまま意味を失い、経路 3 でコピー漏れが起きても誰も気づけない。
- * **この文とコメントに `pickMailPlan` と開き括弧を続けて書かないこと。**
- * slice の起点がコメントまで前に動き、下で定義している関数（開く側）が
- * コピーより前に見えて、順序テストが意味を失う（そのうえ落ちる）。
+ * 前」は pickMailPlan() の呼び出し位置から後方を slice して index を比較している
+ * ため、3 つが同一ファイルにあることが前提になっている。別ファイルに散らすと
+ * テストは green のまま意味を失い、経路 3 でコピー漏れが起きても誰も気づけない。
+ * 検査はコメントを除去した後のコードに対して行うので、この説明文が slice の
+ * 起点を動かすことはない（以前はそれを避けるための注意書きがここにあった）。
  *
  * 「どの URL を開くか」は core の mailopen.js が決める。ここは開き方（DOM 操作）
  * と、開けなかったときの退路の見せ方だけを持つ。
@@ -43,8 +42,9 @@ function jimotoOpenMailUrl({ url, newTab, root }) {
     link.setAttribute('rel', 'noopener');
   }
   root.append(link);
-  link.click();
-  link.remove();
+  // click が throw しても anchor を残さない。パネルは SPA の部分遷移で
+  // 作り直されるので、残すとクリックのたびに href 付きの anchor が積もる
+  try { link.click(); } finally { link.remove(); }
 }
 
 /**
@@ -99,15 +99,46 @@ function jimotoMakeMailActions({ core, profile, getArgs, ui, root }) {
   // クリック時に読む開き方。退路からの学習を、同じページの次のクリックにも
   // 効かせるためにローカルに持つ（profile 自体は書き換えない）
   let mailOpener = profile.defaults.mailOpener;
-  // 退路のボタンから開き直すための、直前に組んだ plan
-  let lastPlan = null;
 
   const hideFallback = () => fallback.classList.remove('jimoto-fallback-shown');
 
   /**
+   * 押した瞬間のフォーム状態から plan を組む。**クリックごとに呼び直す。**
+   *
+   * 宛先・冊数は「押した瞬間」の値で 1 度だけ読む。validate と composeOrder に
+   * 別々に読ませると、間に利用者が select を触った場合に食い違う。
+   * 逆に、**組んだ plan を保持して別のボタンで使い回すこともしない。**
+   * 退路は 1.2 秒後に出て閉じるまで残るので、間に財源や冊数が変わりうる。
+   * 古い plan を開き直すと、利用者には「同じ下書きを別の方法で開くボタン」に
+   * 見えたまま旧課題番号の下書きが飛ぶ（誤発注は研究費の執行事故になる）。
+   *
+   * @returns {object|null} 設定が未入力なら null（案内は出し切ってある）
+   */
+  const buildPlan = () => {
+    const args = getArgs();
+    const missing = core.validate(profile, args.destinationId);
+    if (missing.length) {
+      // 設定画面が開けた場合はこちらが最後に残る。開けなかった場合は
+      // openOptions() の失敗トーストがこの文言を前置して引き継ぐ
+      const detail = `設定が未入力です: ${missing.join(' / ')}`;
+      ui.toast(detail, 'error');
+      ui.openOptions(`${detail}。`);
+      return null;
+    }
+    // 情報量の多い経路から順に試す（フル版 → 簡略版 → コピー）。
+    // 判定は core の pickMailPlan に寄せてあり、長さの再計算はしない。
+    // パネルには自由記述の入力欄が無いので簡略版は常に候補にできる
+    return core.pickMailPlan({
+      full: core.composeOrder(args),
+      compact: core.composeOrder({ ...args, compact: true }),
+    });
+  };
+
+  /**
    * 退路の「Gmail で開く」。**開き方の学習はここ 1 箇所だけが行う。**
    *
-   * (a) その場で Gmail を開く（このクリックは新しいユーザー操作なので確実に通る）
+   * (a) その場のフォーム状態から組み直して Gmail を開く（このクリックは
+   *     新しいユーザー操作なので、コピーも開くのも確実に通る）
    * (b) **開いてから**保存する。保存が失敗しても Gmail は開いている
    * (c) 次回から変わることと、戻せることを伝える
    *
@@ -115,12 +146,31 @@ function jimotoMakeMailActions({ core, profile, getArgs, ui, root }) {
    * 「消せる案内 1 つ」に留めるため、書き換えは利用者のクリックだけを根拠にする。
    */
   const rememberGmailChoice = async () => {
-    if (!lastPlan) return;
-    const target = core.resolveMailTarget({ plan: lastPlan, opener: 'gmail' });
-    jimotoOpenMailUrl({ url: target.url, newTab: target.newTab, root });
+    const plan = buildPlan();
+    if (!plan) return;
+    const target = core.resolveMailTarget({ plan, opener: 'gmail' });
+    try {
+      // コピー経路は退路のクリックでも打ち直す。前のクリックで入れた本文は
+      // 古い可能性があるうえ、間に別のコピーで上書きされていることもある
+      if (plan.mode === 'copy') await navigator.clipboard.writeText(plan.copyText);
+      jimotoOpenMailUrl({ url: target.url, newTab: target.newTab, root });
+    } catch (error) {
+      // 黙って失敗すると、この PR が消そうとしている「押しても何も起きない」と
+      // 見分けがつかなくなる
+      ui.toast(`Gmail を開けませんでした: ${error.message}`, 'error');
+      return;
+    }
     hideFallback();
     mailOpener = 'gmail';
-    await core.saveProfile(core.setMailOpener(profile, 'gmail'));
+    try {
+      await core.saveProfile(core.setMailOpener(profile, 'gmail'));
+    } catch {
+      // 拡張を再読み込みした後の content script は chrome.storage が
+      // "Extension context invalidated" で throw する。実際によく起きる。
+      // 開けたことと保存できなかったことは切り分けて伝える
+      ui.toast('この 1 回は Gmail で開きました。設定は保存できませんでした', 'error');
+      return;
+    }
     ui.toast('次回から Gmail で開きます（設定で戻せます）');
   };
 
@@ -143,34 +193,26 @@ function jimotoMakeMailActions({ core, profile, getArgs, ui, root }) {
   ]);
 
   const openMail = async () => {
-    // 宛先・冊数は「押した瞬間」の値で 1 度だけ読む。validate と composeOrder に
-    // 別々に読ませると、間に利用者が select を触った場合に食い違う
-    const args = getArgs();
-    const missing = core.validate(profile, args.destinationId);
-    if (missing.length) {
-      // 設定画面が開けた場合はこちらが最後に残る。開けなかった場合は
-      // openOptions() の失敗トーストがこの文言を前置して引き継ぐ
-      const detail = `設定が未入力です: ${missing.join(' / ')}`;
-      ui.toast(detail, 'error');
-      ui.openOptions(`${detail}。`);
-      return;
-    }
-    // 情報量の多い経路から順に試す（フル版 → 簡略版 → コピー）。
-    // 判定は core の pickMailPlan に寄せてあり、長さの再計算はしない。
-    // パネルには自由記述の入力欄が無いので簡略版は常に候補にできる
-    const plan = core.pickMailPlan({
-      full: core.composeOrder(args),
-      compact: core.composeOrder({ ...args, compact: true }),
-    });
-    lastPlan = plan;
+    // 前のクリックで出た退路を先に消す。再試行が成功しても残っていると、
+    // 「メーラーが開きませんでしたか？」が新しい下書きの上に居座る
+    hideFallback();
+    const plan = buildPlan();
+    if (!plan) return;
     // どの URL をどう開くかは core が決める。mailto を組み直さない
     const target = core.resolveMailTarget({ plan, opener: mailOpener });
-    if (plan.mode === 'copy') {
-      // フォーカスが移ると clipboard.writeText が拒否されうるので、
-      // コピーを先に済ませる。この順序を入れ替えない
-      await navigator.clipboard.writeText(plan.copyText);
+    try {
+      if (plan.mode === 'copy') {
+        // フォーカスが移ると clipboard.writeText が拒否されうるので、
+        // コピーを先に済ませる。この順序を入れ替えない
+        await navigator.clipboard.writeText(plan.copyText);
+      }
+      jimotoOpenMailUrl({ url: target.url, newTab: target.newTab, root });
+    } catch (error) {
+      // writeText が拒否されると（document がフォーカスを失っている等）、
+      // 以前はメーラーも開かずトーストも出ず「何も起きない」だけが残った
+      ui.toast(`メールを開けませんでした: ${error.message}`, 'error');
+      return;
     }
-    jimotoOpenMailUrl({ url: target.url, newTab: target.newTab, root });
     if (plan.mode === 'copy') {
       ui.toast('本文をコピーしました。開いたメールに貼り付けてください');
     } else if (plan.mode === 'compact') {
