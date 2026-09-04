@@ -109,7 +109,7 @@ test('content script のどのファイルも openOptionsPage を呼ばない', 
   // 名前ごと禁じると罠の説明が婉曲表現になり、一番読まれる場所から grep 可能な
   // 固有名詞が消えるので、呼び出し形 `openOptionsPage(` / `openOptionsPage?.(`
   // だけを禁じる。
-  // content script は 4 ファイルに分かれているので、content.js だけを見ると
+  // content script は 5 ファイルに分かれているので、content.js だけを見ると
   // 別ファイルに書かれた呼び出しを見逃す。宣言されている全ファイルを回す
   for (const path of contentScriptFiles) {
     assert.doesNotMatch(
@@ -136,7 +136,7 @@ test('content script と background.js のメッセージ型が一致する', ()
 });
 
 test('content_scripts.js が期待した順序で宣言されている', () => {
-  // classic script の 4 分割はトップレベル宣言の共有で成立している。
+  // classic script の 5 分割はトップレベル宣言の共有で成立している。
   // 定義より前に使う順序（例: content.js が先）にすると、その時点で
   // content-sites.js の束縛はまだ存在せず ReferenceError:
   // JIMOTO_SITES is not defined になる（TDZ ではない。別々の script は
@@ -152,6 +152,7 @@ test('content_scripts.js が期待した順序で宣言されている', () => {
     'content-sites.js',
     'content-ui.js',
     'content-mail.js',
+    'content-panel.js',
     'content.js',
   ]);
 });

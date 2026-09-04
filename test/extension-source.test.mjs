@@ -35,6 +35,7 @@ const DOM_WRITING_SOURCES = [
   'src/adapters/extension/content-sites.js',
   'src/adapters/extension/content-ui.js',
   'src/adapters/extension/content-mail.js',
+  'src/adapters/extension/content-panel.js',
   'src/adapters/extension/options.js',
   'src/adapters/extension/popup.js',
   'src/adapters/local/app.js',

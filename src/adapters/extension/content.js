@@ -5,8 +5,9 @@
  * chrome.runtime.getURL + 動的 import で読み込む（ビルド不要を維持するため）。
  *
  * content script は content-sites.js → content-ui.js → content-mail.js →
- * content.js の 4 ファイルを manifest の content_scripts.js にこの順で並べた
- * もので、classic script なのでトップレベル宣言を同じ isolated world で共有する
+ * content-panel.js → content.js の 5 ファイルを manifest の content_scripts.js に
+ * この順で並べたもので、classic script なのでトップレベル宣言を同じ
+ * isolated world で共有する
  * （ファイル間の import 文は無い。契約は JIMOTO_ / jimoto 接頭で grep する）。
  * 分割を動的 import 化しないのは、全ファイルを web_accessible_resources に
  * 載せる必要が生じ、パネルを closed shadow root に閉じて露出を絞る方針に
@@ -67,97 +68,21 @@ function openOptions(context = '') {
   }
 }
 
-// 冊数の下限は 1。非数値・0 以下が composeOrder に流れ込むのを防ぐ
-function clampQty(v) {
-  const n = Math.floor(Number(v));
-  return Number.isFinite(n) && n >= 1 ? n : 1;
-}
-
 async function buildPanel(core, book) {
   const profile = core.withDefaults(await core.loadProfile());
-  const d = profile.defaults;
 
-  const state = {
-    destinationId: d.destinationId || profile.destinations[0]?.id || '',
-    fundingMode: d.fundingMode,
-    fundingSourceId: d.fundingSourceId || profile.fundingSources[0]?.id || '',
-    quantity: d.quantity || 1,
-  };
-
-  // option のラベルはユーザー設定由来の文字列なので text で入れる（innerHTML 補間はしない）
-  const destSel = jimotoEl(
-    'select',
-    { class: 'jimoto-input' },
-    profile.destinations.length
-      ? profile.destinations.map((x) =>
-          jimotoEl('option', { value: x.id, text: core.destinationLabel(x) })
-        )
-      : [jimotoEl('option', { value: '', text: '宛先未登録 — 設定から追加' })]
-  );
-  destSel.value = state.destinationId;
-  // 保存済みの既定 id が消えている場合に「何も選ばれていない」状態にしない
-  if (!destSel.value) destSel.selectedIndex = 0;
-
-  const fundingSel = jimotoEl('select', { class: 'jimoto-input' }, [
-    jimotoEl('option', { value: 'private', text: '私費' }),
-    jimotoEl('option', { value: 'research', text: '研究費' }),
-  ]);
-  fundingSel.value = state.fundingMode;
-
-  const sourceSel = jimotoEl(
-    'select',
-    { class: 'jimoto-input' },
-    profile.fundingSources.length
-      ? profile.fundingSources.map((s) =>
-          jimotoEl('option', { value: s.id, text: `${s.label}${s.code ? ` (${s.code})` : ''}` })
-        )
-      : [jimotoEl('option', { value: '', text: '財源未登録 — 設定から追加' })]
-  );
-  sourceSel.value = state.fundingSourceId;
-
-  const qty = jimotoEl('input', {
-    class: 'jimoto-input jimoto-qty',
-    type: 'number',
-    min: '1',
-    inputmode: 'numeric',
-    value: String(clampQty(state.quantity)),
-  });
-  // 空欄・0・マイナスのまま送信されないよう、フォーカスが外れた時点で 1 に戻す
-  qty.addEventListener('change', () => {
-    qty.value = String(clampQty(qty.value));
-  });
-
-  const fundingRow = jimotoEl('div', { class: 'jimoto-row' }, [
-    jimotoEl('label', { class: 'jimoto-label', text: '支払' }),
-    fundingSel,
-    sourceSel,
-  ]);
-
-  const syncVisibility = () => {
-    // 研究費・財源は生協の宛先でしか意味がない。composeOrder と同じ解決経路で種別を見る
-    const isCoop = core.findDestination(profile, destSel.value)?.kind === 'coop';
-    fundingRow.style.display = isCoop ? '' : 'none';
-    sourceSel.style.display = fundingSel.value === 'research' ? '' : 'none';
-  };
-  destSel.addEventListener('change', syncVisibility);
-  fundingSel.addEventListener('change', syncVisibility);
-
-  const item = () => ({ book, quantity: clampQty(qty.value) });
-  // composeOrder / validate に渡す引数。クリック時点の UI 状態で作る
-  const orderArgs = () => ({
-    destinationId: destSel.value,
-    profile,
-    fundingMode: fundingSel.value,
-    fundingSourceId: sourceSel.value,
-    items: [item()],
-  });
+  // 入力欄（注文先・支払・財源・冊数）は content-panel.js に切り出してある。
+  // ここに残すのは書誌の表示・ボタン・パネル木の組み立てだけ
+  const { rows, getArgs, syncVisibility } = jimotoBuildOrderForm(core, profile, book);
 
   const ui = { toast: jimotoToast, openOptions };
   const { openMail, copyBody, copyRemarks } =
-    jimotoMakeMailActions({ core, profile, getArgs: orderArgs, ui });
+    jimotoMakeMailActions({ core, profile, getArgs, ui });
 
   const addCart = async () => {
-    const cart = await core.addToCart(item());
+    // 冊数は入力欄の現在値。getArgs() が items に畳み込んでいるのでそこから
+    // 1 冊ぶんを取り出す（同じ値を作る経路を 2 本に増やさない）
+    const cart = await core.addToCart(getArgs().items[0]);
     // content script から popup をプログラムで開く API は無いため、
     // 次の一手（ツールバーのアイコン）を文言で案内して導線を繋ぐ
     jimotoToast(`注文リストに追加（${cart.length}点）。ツールバーの拡張アイコンからまとめて1通にできます`);
@@ -183,15 +108,8 @@ async function buildPanel(core, book) {
     jimotoEl('div', { class: 'jimoto-title', text: '地元で買う' }),
     bookEl,
     isbnEl,
-    jimotoEl('div', { class: 'jimoto-row' }, [
-      jimotoEl('label', { class: 'jimoto-label', text: '注文先' }),
-      destSel,
-    ]),
-    fundingRow,
-    jimotoEl('div', { class: 'jimoto-row' }, [
-      jimotoEl('label', { class: 'jimoto-label', text: '冊数' }),
-      qty,
-    ]),
+    // 注文先 → 支払 → 冊数。並びは content-panel.js が rows の順で決めている
+    ...rows,
     // 主導線は Amazon の購入ボックスと同じ縦 2 段。「今すぐ買う」を採らないのは、
     // 実際には買わずメール下書きを作るだけで、Amazon 本物のボタンがすぐ近くに
     // あるため、同じ語だと双方向の誤クリックを招くから

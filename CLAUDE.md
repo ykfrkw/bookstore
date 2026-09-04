@@ -40,6 +40,7 @@ src/adapters/extension/  Chrome 拡張（MV3）
   content-sites.js       JIMOTO_SITES（サイト別セレクタ）・jimotoPageText
   content-ui.js          jimotoUrl / jimotoEl / jimotoToast / jimotoInjectPanelStyle
   content-mail.js        jimotoMakeMailActions（メール送出とコピー）
+  content-panel.js       jimotoBuildOrderForm（注文先・支払・財源・冊数の入力欄）
   content.js             パネルの組み立て・差し込み・URL 監視。attachShadow はここ
 src/adapters/local/      ローカル単体ページ（同じ core を相対 import）
 scripts/sync-core.mjs    core を拡張ディレクトリへコピー（拡張は上位を参照できないため）
@@ -67,9 +68,10 @@ npm run build     # dist/bookstore-<version>.zip を作る
 - **`src/core/` を編集したら `npm run sync` を走らせる。** 忘れると拡張だけ
   古いコードで動き、原因の分かりにくいバグになる。`src/adapters/extension/core/`
   は生成物なので直接編集しない。
-- **content script は 4 ファイルで、順序に意味がある。** `manifest.json` の
+- **content script は 5 ファイルで、順序に意味がある。** `manifest.json` の
   `content_scripts[0].js` は
-  `content-sites.js` → `content-ui.js` → `content-mail.js` → `content.js` の順。
+  `content-sites.js` → `content-ui.js` → `content-mail.js` →
+  `content-panel.js` → `content.js` の順。
   ESM ではなく classic script なので、各ファイルのトップレベル宣言が同じ
   isolated world で共有される（`import` 文は無い）。**順序を変えると
   `ReferenceError: JIMOTO_SITES is not defined` で落ち、`run()` の catch に
@@ -91,9 +93,11 @@ npm run build     # dist/bookstore-<version>.zip を作る
   ファイル間の契約は grep できるように `JIMOTO_` / `jimoto`
   接頭で統一する（`el` のような裸の名前を新しく足さない）。
   ただし `content.js` は分割前からの裸のグローバルを既に持っている:
-  **`PANEL_ID` / `loadCore` / `openOptions` / `clampQty` / `buildPanel` /
+  **`PANEL_ID` / `loadCore` / `openOptions` / `buildPanel` /
   `mount` / `run` / `tick` / `lastHref`**（改名はしない。churn が大きく利益が
-  小さい）。全ファイルが同じ字句環境を共有するので、別ファイルでこの 9 個を
+  小さい）。**`clampQty` も同じ由来の裸のグローバルで、`content-panel.js` へ
+  移した**（唯一の消費者である冊数入力と同居させただけ。改名はしていない）。
+  全ファイルが同じ字句環境を共有するので、別ファイルでこの 9 個を
   再宣言すると `SyntaxError: Identifier 'mount' has already been declared` で
   そのファイルの注入が丸ごと死ぬ。新しく書くときはこの一覧を避けること。
   分割を `chrome.runtime.getURL` + 動的 `import()` に変えないこと。分割した

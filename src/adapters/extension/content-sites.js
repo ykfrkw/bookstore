@@ -1,7 +1,7 @@
 /**
  * 対応サイト別の設定。content script の 1 ファイル目として読み込まれる。
  *
- * このファイルと content-ui.js / content-mail.js / content.js は
+ * このファイルと content-ui.js / content-mail.js / content-panel.js / content.js は
  * manifest の content_scripts.js に**この順で**並べた classic script で、
  * 同じ isolated world のトップレベル宣言を共有する（ESM ではない）。
  * 順序が崩れると JIMOTO_SITES が未定義になりパネルが静かに出なくなるため、

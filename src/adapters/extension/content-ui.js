@@ -1,13 +1,14 @@
 /**
  * パネルの DOM 組み立てと通知の道具。content script の 2 ファイル目。
  *
- * content-sites.js の冒頭に書いたとおり、content script の 4 ファイルは
+ * content-sites.js の冒頭に書いたとおり、content script の 5 ファイルは
  * classic script としてトップレベル宣言を共有する。ここで定義するものは
- * すべて content.js / content-mail.js から呼ばれる契約なので、
+ * すべて content.js / content-mail.js / content-panel.js から呼ばれる契約なので、
  * grep できるように jimoto 接頭で統一している。
  *
  * ここには「見た目と通知」だけを置く。chrome.runtime.sendMessage を伴う
- * 経路（設定画面を開く）は content.js に、メール送出は content-mail.js に置く。
+ * 経路（設定画面を開く）は content.js に、メール送出は content-mail.js に、
+ * 注文の入力欄の組み立ては content-panel.js に置く。
  */
 
 // manifest の content_scripts.css と同じファイル。shadow root へも流し込むため
