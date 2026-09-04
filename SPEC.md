@@ -318,8 +318,14 @@ Amazon 等のページ上で動く任意のスクリプトが
 並べた **classic script** で、ESM ではないためトップレベル宣言を同じ
 isolated world で共有する（ファイル間の `import` 文は無い。契約は
 `JIMOTO_` / `jimoto` 接頭で grep する）。順序を変えると `JIMOTO_SITES` の参照が
-TDZ で落ちてパネルが静かに出なくなるので、並び順は `test/manifest.test.mjs` が
-`deepEqual` で固定してある。動的 `import()` で分割しないのは、分割した全ファイルを
+`ReferenceError: JIMOTO_SITES is not defined` で落ちてパネルが静かに出なくなる
+（TDZ ではない。別々の classic script は自分自身の instantiation で束縛を作るので、
+`content.js` が先に走った時点では束縛がまだ存在しない）。しかも失敗は間欠的で、
+`tick()` が `run()` より先に `lastHref` を更新するため同じ URL では再試行せず、
+URL が変われば全ファイルがロード済みなので成功する——静的なページロードでは
+永久に出ないが、SPA 遷移では 2 つ目の URL から出る。並び順と、実在する
+`content*.js` が全部宣言されていることは `test/manifest.test.mjs` が
+固定してある。動的 `import()` で分割しないのは、分割した全ファイルを
 `web_accessible_resources` に載せることになり、「注入パネルは closed shadow DOM に
 閉じる」方針に逆行するため。
 

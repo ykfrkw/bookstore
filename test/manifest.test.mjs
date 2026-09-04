@@ -12,7 +12,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 
 const EXTENSION_DIR = new URL('../src/adapters/extension/', import.meta.url);
 
@@ -29,6 +29,11 @@ const contentScriptFiles = manifest.content_scripts.flatMap((entry) => entry.js 
 
 /** 全 content script を 1 本の文字列として見る（型やリテラルの有無を見るとき用） */
 const contentScriptSource = () => contentScriptFiles.map(readExtensionFile).join('\n');
+
+/** ディスク上に実在する content script（命名規約 content*.js で拾う） */
+const contentScriptFilesOnDisk = readdirSync(EXTENSION_DIR)
+  .filter((name) => /^content.*\.js$/.test(name))
+  .sort();
 
 test('background service worker が宣言され、ファイルが実在する', () => {
   // 無いと content script からの「設定を開く」sendMessage が
@@ -52,6 +57,24 @@ test('manifest が参照する資産がすべて実在する', () => {
 
   for (const path of referencedPaths) {
     assert.ok(extensionFileExists(path), `manifest の参照先が無い: ${path}`);
+  }
+});
+
+test('実在する content*.js がすべて manifest に宣言されている', () => {
+  // 上のテストは「宣言 → 実体」の向きしか見ていない。逆向き（実体 → 宣言）が
+  // 抜けると、新しいファイルを置いて manifest の配列に書き忘れても全件 green で
+  // 通ってしまう。そのファイルは注入されないので、そこで定義した jimoto* は
+  // 呼び出し時に undefined になり、例外は run().catch に飲まれて console.warn が
+  // 残るだけ。**パネルが静かに出なくなる**（順序 deepEqual が防いでいるのと
+  // 同じ失敗モードで、唯一こちらだけが素通りしていた）
+  const declared = manifest.content_scripts[0].js;
+  for (const name of contentScriptFilesOnDisk) {
+    assert.ok(
+      declared.includes(name),
+      `${name} が content_scripts[0].js に無い: 注入されず、そこで定義した ` +
+        'jimoto* は undefined になる。エラーは run().catch に飲まれ、' +
+        'console.warn だけ残してパネルが静かに出なくなる',
+    );
   }
 });
 
@@ -114,10 +137,17 @@ test('content script と background.js のメッセージ型が一致する', ()
 
 test('content_scripts.js が期待した順序で宣言されている', () => {
   // classic script の 4 分割はトップレベル宣言の共有で成立している。
-  // 定義より前に使う順序（例: content.js が先）にすると JIMOTO_SITES の参照が
-  // TDZ で落ち、run() の catch に飲まれて「パネルが出ない」だけが残る。
-  // 「manifest の参照先が実在する」テストは配列から抜けても素通りするので、
-  // 抜け・並び替えの両方をここで受け止める
+  // 定義より前に使う順序（例: content.js が先）にすると、その時点で
+  // content-sites.js の束縛はまだ存在せず ReferenceError:
+  // JIMOTO_SITES is not defined になる（TDZ ではない。別々の script は
+  // 自分自身の instantiation で束縛を作るため）。例外は run() の catch に
+  // 飲まれて「パネルが出ない」だけが残る。
+  // しかも失敗は間欠的: tick() は run() より先に lastHref を更新するので
+  // 同じ URL では再試行せず、URL が変われば（もう全ファイルがロード済みなので）
+  // 成功する。静的なページロードでは永久に出ないが、SPA 遷移では 2 つ目の
+  // URL から出る——「常に出ない」より debug が難しい。
+  // 並び替えのほか、配列からの抜けもここで受け止める（実体 → 宣言の向きは
+  // 「実在する content*.js がすべて manifest に宣言されている」が見る）
   assert.deepEqual(manifest.content_scripts[0].js, [
     'content-sites.js',
     'content-ui.js',

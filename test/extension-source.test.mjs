@@ -12,10 +12,22 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 
 const read = (relativePath) =>
   readFileSync(new URL(`../${relativePath}`, import.meta.url), 'utf8');
+
+const EXTENSION_DIR = new URL('../src/adapters/extension/', import.meta.url);
+
+/**
+ * content script として注入されるファイル。manifest の宣言ではなくディスク上の
+ * 実体から拾うのは、宣言を忘れたファイル（注入されないので実機では死んでいる）も
+ * 検査対象に入れておきたいから。宣言漏れ自体は test/manifest.test.mjs が落とす。
+ */
+const CONTENT_SCRIPT_SOURCES = readdirSync(EXTENSION_DIR)
+  .filter((name) => /^content.*\.js$/.test(name))
+  .sort()
+  .map((name) => `src/adapters/extension/${name}`);
 
 /** innerHTML を書く可能性のあるアダプタのファイル。core は DOM を触らない */
 const DOM_WRITING_SOURCES = [
@@ -36,11 +48,24 @@ const DOM_WRITING_SOURCES = [
 const INNER_HTML_ASSIGNMENT = /innerHTML\s*=\s*(`(?:[^`\\]|\\[\s\S])*`|[^;\n]*)/g;
 
 test('注入パネルの shadow root は closed のまま', () => {
-  const source = read('src/adapters/extension/content.js');
   // 'open' だと host.shadowRoot からページ側に読まれ、宛先ラベルと
   // 科研費の課題番号が露出する（SPEC「注入パネルは closed shadow DOM に閉じる」）
-  assert.match(source, /attachShadow\(\s*\{\s*mode:\s*['"]closed['"]\s*\}\s*\)/);
-  assert.doesNotMatch(source, /attachShadow\(\s*\{\s*mode:\s*['"]open['"]/);
+  assert.match(
+    read('src/adapters/extension/content.js'),
+    /attachShadow\(\s*\{\s*mode:\s*['"]closed['"]\s*\}\s*\)/,
+    'content.js: パネルの attachShadow は mode: "closed" のまま置く',
+  );
+
+  // 否定側は content script の全ファイルに回す。content.js だけを読むと、
+  // 別ファイルに足した 2 枚目のパネルやダイアログが既定値の mode: 'open' で
+  // 開かれても green のまま通り、露出が静かに戻る
+  for (const path of CONTENT_SCRIPT_SOURCES) {
+    assert.doesNotMatch(
+      read(path),
+      /attachShadow\(\s*\{\s*mode:\s*['"]open['"]/,
+      `${path}: open shadow はホストページから shadowRoot 経由で読める`,
+    );
+  }
 });
 
 test('innerHTML に変数を補間しているアダプタが無い', () => {
