@@ -12,11 +12,11 @@ import { withDefaults } from '../src/core/profile.js';
 
 const profile = withDefaults({
   requester: {
-    name: '古川 由己',
-    affiliation: '○○大学 医学部 精神医学教室',
-    email: 'yuki@example.ac.jp',
+    name: '山田 太郎',
+    affiliation: '○○大学 △△学部 ××研究室',
+    email: 'taro@example.ac.jp',
     phone: '03-0000-0000',
-    deliveryPlace: '医学部本館 3F 305号室',
+    deliveryPlace: '△△棟 3F 305号室',
   },
   destinations: [
     {
@@ -41,7 +41,7 @@ const profile = withDefaults({
     },
   ],
   fundingSources: [
-    { id: 'kaken', label: '科研費 基盤(C)', code: '00X00000', representative: '古川 由己' },
+    { id: 'kaken', label: '科研費 基盤(C)', code: '00X00000', representative: '山田 太郎' },
   ],
   defaults: { destinationId: 'coop' },
 });
@@ -51,7 +51,7 @@ const items = [
     book: {
       isbn13: '9784003100011',
       title: 'テスト書名',
-      author: 'テスト著者',
+      author: 'テスト 著者',
       publisher: '岩波書店',
       pubdate: '2024-01',
       price: 2860,
@@ -66,10 +66,10 @@ test('生協・研究費の文面に財源と予算代表者が入る', () => {
   assert.match(d.subject, /研究費/);
   assert.match(d.body, /科研費 基盤\(C\)/);
   assert.match(d.body, /課題番号 00X00000/);
-  assert.match(d.body, /予算代表者: 古川 由己/);
+  assert.match(d.body, /予算代表者: 山田 太郎/);
   assert.match(d.body, /ISBN: 9784003100011/);
   assert.match(d.body, /冊数: 2/);
-  assert.match(d.body, /医学部本館 3F 305号室/);
+  assert.match(d.body, /△△棟 3F 305号室/);
   assert.match(d.body, /組合員番号: 12345/);
 });
 
@@ -102,7 +102,7 @@ test('会員番号は書店の宛先では「会員番号」と呼ぶ', () => {
 });
 
 test('宛先未登録でも例外にならず、宛先が空の下書きを返す', () => {
-  const empty = withDefaults({ requester: { name: '古川 由己' } });
+  const empty = withDefaults({ requester: { name: '山田 太郎' } });
   const d = composeOrder({ destinationId: '', items, profile: empty });
   assert.equal(d.to, '');
   assert.equal(d.cc, '');
@@ -177,8 +177,8 @@ test('buildMailto: composeOrder の mailto と一致する（実装が一本化�
 test('備考欄用の1行', () => {
   const line = remarksLine(profile, { fundingMode: 'research', fundingSourceId: 'kaken' });
   assert.match(line, /研究費（科研費 基盤\(C\) 課題番号 00X00000）/);
-  assert.match(line, /予算代表者: 古川 由己/);
-  assert.match(line, /配達先: 医学部本館 3F 305号室/);
+  assert.match(line, /予算代表者: 山田 太郎/);
+  assert.match(line, /配達先: △△棟 3F 305号室/);
 });
 
 test('財源ラベル', () => {
@@ -197,12 +197,12 @@ test('財源ラベル', () => {
 /** 実運用に近い（全項目を埋めた）プロフィール。長さの主張はこれを基準にする */
 const filledProfile = withDefaults({
   requester: {
-    name: '古川 由己',
-    kana: 'ふるかわ ゆうき',
-    affiliation: '○○大学 医学部 精神医学教室',
-    email: 'furukawa@example.ac.jp',
-    phone: '03-1234-5678',
-    deliveryPlace: '医学部本館 3F 305 号室',
+    name: '山田 太郎',
+    kana: 'やまだ たろう',
+    affiliation: '○○大学 △△学部 ××研究室',
+    email: 'taro@example.ac.jp',
+    phone: '03-0000-0000',
+    deliveryPlace: '△△棟 3F 305号室',
   },
   destinations: [
     {
@@ -227,7 +227,7 @@ const filledProfile = withDefaults({
     },
   ],
   fundingSources: [
-    { id: 'kaken', label: '科研費 基盤(C)', code: '00X00000', representative: '古川 由己' },
+    { id: 'kaken', label: '科研費 基盤(C)', code: '00X00000', representative: '山田 太郎' },
   ],
   defaults: { destinationId: 'coop' },
 });
@@ -238,7 +238,7 @@ const oneBook = [
     book: {
       isbn13: '9784840488235',
       title: '精神科診療のためのガイドブック',
-      author: '山田 太郎',
+      author: 'テスト 著者',
       publisher: 'メディカ出版',
       pubdate: '2024-03',
       price: 3850,
@@ -297,7 +297,9 @@ test('簡略版でも書名と ISBN は必ず残る（誤発注に気づける�
 
 test('簡略版は著者・出版社・罫線・■ を落とす', () => {
   const compact = composeOrder({ ...coopArgs, compact: true });
-  assert.ok(!compact.body.includes('山田 太郎'));
+  // 検査したい挙動は「著者行を落とすこと」。名前ではなくラベルで書けば
+  // fixture の人名が何であれ壊れない（`予算代表者:` は `著者:` を含まない）
+  assert.ok(!compact.body.includes('著者:'));
   assert.ok(!compact.body.includes('メディカ出版'));
   assert.ok(!compact.body.includes('2024-03'));
   assert.ok(!compact.body.includes('----'));
@@ -341,8 +343,8 @@ test('簡略版でも組合員番号・会員番号は落とさない（非空�
 test('簡略版でも生協なら財源と予算代表者が入り、書店では入らない', () => {
   const coop = composeOrder({ ...coopArgs, compact: true });
   assert.match(coop.body, /支払: 研究費（科研費 基盤\(C\) 課題番号 00X00000）/);
-  assert.match(coop.body, /予算代表者: 古川 由己/);
-  assert.match(coop.body, /配達: 医学部本館 3F 305 号室/);
+  assert.match(coop.body, /予算代表者: 山田 太郎/);
+  assert.match(coop.body, /配達: △△棟 3F 305号室/);
 
   const store = composeOrder({
     destinationId: 'bs',

@@ -10,7 +10,7 @@ import {
 
 /** v0.2 までのスキーマ。既に保存済みのユーザーがいるので落とせない */
 const legacyProfile = {
-  requester: { name: '古川 由己', affiliation: '○○大学', email: 'yuki@example.ac.jp' },
+  requester: { name: '山田 太郎', affiliation: '○○大学', email: 'taro@example.ac.jp' },
   coop: {
     label: '○○大学生協 書籍部',
     to: 'book@coop.example.ac.jp',

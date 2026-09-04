@@ -38,10 +38,10 @@ export const DEFAULT_PROFILE = {
   requester: {
     name: '',
     kana: '',
-    affiliation: '', // 例: ○○大学 医学部 精神医学教室
+    affiliation: '', // 例: ○○大学 △△学部 ××研究室
     email: '',
     phone: '',
-    deliveryPlace: '', // 例: 医学部本館 3F 305 号室
+    deliveryPlace: '', // 例: △△棟 3F 305号室
   },
 
   /** 注文先。複数登録して注文時に選ぶ。既定は空で、未登録は validate が拾う */
