@@ -197,6 +197,32 @@
   outline-offset: 2px;
 }
 
+/*
+ * メーラーが開かなかったと推定できたときの退路（→ content-mail.js）。
+ * 既定は非表示で、jimoto-fallback-shown が付いたときだけ出る。
+ *
+ * **エラーではなく案内なので赤（--destructive）は使わない。** 推定は外れうる
+ * （mailto ハンドラの登録状況は API から照会できない）ので、外れたときに
+ * 「何か壊れた」と読めてしまう色を使わない。枠は muted に留める。
+ */
+.jimoto-fallback {
+  display: none;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--muted-foreground);
+  border-radius: var(--radius);
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.jimoto-fallback-shown {
+  display: block;
+}
+
+.jimoto-fallback .jimoto-actions {
+  margin-top: 6px;
+}
+
 .jimoto-settings {
   display: inline-block;
   margin-top: 10px;

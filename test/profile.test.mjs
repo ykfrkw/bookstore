@@ -6,6 +6,8 @@ import {
   findDestination,
   destinationLabel,
   createDestination,
+  MAIL_OPENERS,
+  setMailOpener,
 } from '../src/core/profile.js';
 
 /** v0.2 までのスキーマ。既に保存済みのユーザーがいるので落とせない */
@@ -225,4 +227,49 @@ test('簡略版テンプレートは既存プロフィールにも自動で入�
   }
   assert.match(p.templates.coopCompactGreeting, /\{orgLabel\}/);
   assert.match(p.templates.bookstoreCompactGreeting, /\{orgLabel\}/);
+});
+
+test('mailOpener の既定は auto', () => {
+  // 既定を 'gmail' にすると、何も設定していない利用者の下書き（氏名・所属・
+  // 財源）が黙って Google に渡る。既定は必ず mailto 側から始める
+  assert.equal(withDefaults({}).defaults.mailOpener, 'auto');
+  assert.equal(withDefaults(legacyProfile).defaults.mailOpener, 'auto');
+});
+
+test('保存済みの mailOpener は保たれる', () => {
+  for (const opener of MAIL_OPENERS) {
+    const p = withDefaults({ defaults: { mailOpener: opener } });
+    assert.equal(p.defaults.mailOpener, opener);
+  }
+});
+
+test('未知の mailOpener は auto に丸まる', () => {
+  // 未知の値が素通りすると looksUnopened が常に偽になり（'auto' でないため）
+  // 退路が二度と出ない＝「押しても何も起きない」に静かに戻る
+  for (const bad of ['outlook', '', null, 'GMAIL', 0]) {
+    const p = withDefaults({ defaults: { mailOpener: bad } });
+    assert.equal(p.defaults.mailOpener, 'auto', `${String(bad)} を丸めていない`);
+  }
+});
+
+test('setMailOpener は元のプロフィールを変更しない', () => {
+  // 退路の「Gmail で開く」は、開いたあとにこれを保存する。元を書き換えると
+  // 保存が失敗したときに画面の状態と保存内容が食い違う
+  const before = withDefaults({ requester: legacyProfile.requester });
+  const after = setMailOpener(before, 'gmail');
+  assert.equal(after.defaults.mailOpener, 'gmail');
+  assert.equal(before.defaults.mailOpener, 'auto');
+  assert.notEqual(after.defaults, before.defaults);
+  // 他の設定は落とさない
+  assert.equal(after.requester.name, before.requester.name);
+});
+
+test('setMailOpener も未知の値は auto に丸める', () => {
+  assert.equal(setMailOpener(withDefaults({}), 'outlook').defaults.mailOpener, 'auto');
+});
+
+test('MAIL_OPENERS は 3 つ（設定 UI のセレクトと対）', () => {
+  // options.html / index.html のセレクトはこの 3 つを直書きしている。
+  // 増やしたときに UI 側の追記を忘れると、保存できない値が生える
+  assert.deepEqual(MAIL_OPENERS, ['auto', 'mailto', 'gmail']);
 });

@@ -16,15 +16,24 @@
 
 const PANEL_ID = 'jimoto-panel';
 
+/**
+ * core を 1 つのオブジェクトに畳んで返す。
+ *
+ * **core にファイルを足したらここにも足す。** 足し忘れると、そのモジュールの
+ * 関数は `core.xxx` が undefined になり、呼んだ時点の TypeError が
+ * run().catch に飲まれて「パネルが静かに出ない」だけが残る
+ * （test/extension-source.test.mjs が src/core/ の実体と突き合わせている）。
+ */
 async function loadCore() {
-  const [isbnMod, biblio, profileMod, compose, storage] = await Promise.all([
+  const [isbnMod, biblio, profileMod, compose, storage, mailopen] = await Promise.all([
     import(jimotoUrl('core/isbn.js')),
     import(jimotoUrl('core/bibliography.js')),
     import(jimotoUrl('core/profile.js')),
     import(jimotoUrl('core/compose.js')),
     import(jimotoUrl('core/storage.js')),
+    import(jimotoUrl('core/mailopen.js')),
   ]);
-  return { ...isbnMod, ...biblio, ...profileMod, ...compose, ...storage };
+  return { ...isbnMod, ...biblio, ...profileMod, ...compose, ...storage, ...mailopen };
 }
 
 /**
@@ -75,9 +84,22 @@ async function buildPanel(core, book) {
   // ここに残すのは書誌の表示・ボタン・パネル木の組み立てだけ
   const { rows, getArgs, syncVisibility } = jimotoBuildOrderForm(core, profile, book);
 
+  // パネルは closed shadow root に閉じ込める。
+  // <select> には利用者が設定した宛先ラベルと財源ラベル（科研費の課題番号を
+  // 含む）が入るため、light DOM のままだとホストページ上の任意のスクリプトが
+  // querySelectorAll('#jimoto-panel option') で読めてしまう。
+  // closed なら host.shadowRoot が null になり DOM 走査で到達できない。
+  // 'open' では shadowRoot 経由で読めてしまい対策にならないので使わない。
+  //
+  // 中身より先に作るのは、メール送出が anchor の click で開くため
+  // （→ content-mail.js）。**その anchor の href には下書きが乗る**ので、
+  // 挿す先が light DOM ではなくこの shadow root である必要がある
+  const host = jimotoEl('div', { id: PANEL_ID, class: 'jimoto-host' });
+  const shadow = host.attachShadow({ mode: 'closed' });
+
   const ui = { toast: jimotoToast, openOptions };
-  const { openMail, copyBody, copyRemarks } =
-    jimotoMakeMailActions({ core, profile, getArgs, ui });
+  const { openMail, copyBody, copyRemarks, fallback } =
+    jimotoMakeMailActions({ core, profile, getArgs, ui, root: shadow });
 
   const addCart = async () => {
     // 冊数は入力欄の現在値。getArgs() が items に畳み込んでいるのでそこから
@@ -129,6 +151,10 @@ async function buildPanel(core, book) {
       jimotoEl('button', { class: 'jimoto-btn jimoto-ghost', text: '文面をコピー', onclick: copyBody }),
       jimotoEl('button', { class: 'jimoto-btn jimoto-ghost', text: '備考欄をコピー', onclick: copyRemarks }),
     ]),
+    // メーラーが開かなかったと推定できたときだけ出る退路（既定は非表示）。
+    // 実体は content-mail.js が持つ。ボタンの下に置くのは、押した直後に
+    // 目が行っている場所の続きに出したいため
+    fallback,
     jimotoEl('a', {
       class: 'jimoto-settings',
       text: '設定',
@@ -142,14 +168,6 @@ async function buildPanel(core, book) {
 
   syncVisibility();
 
-  // パネルは closed shadow root に閉じ込める。
-  // <select> には利用者が設定した宛先ラベルと財源ラベル（科研費の課題番号を
-  // 含む）が入るため、light DOM のままだとホストページ上の任意のスクリプトが
-  // querySelectorAll('#jimoto-panel option') で読めてしまう。
-  // closed なら host.shadowRoot が null になり DOM 走査で到達できない。
-  // 'open' では shadowRoot 経由で読めてしまい対策にならないので使わない。
-  const host = jimotoEl('div', { id: PANEL_ID, class: 'jimoto-host' });
-  const shadow = host.attachShadow({ mode: 'closed' });
   // CSS は拡張内リソースなので実質即座に解決する。ここで待つことで
   // 無スタイルのパネルが一瞬見える状態を避ける（失敗しても素通りする）
   await jimotoInjectPanelStyle(shadow);

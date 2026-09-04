@@ -1,5 +1,6 @@
 import { withDefaults, validate, findDestination, destinationLabel } from './core/profile.js';
 import { composeOrder, pickMailPlan } from './core/compose.js';
+import { resolveMailTarget } from './core/mailopen.js';
 import { loadProfile, loadCart, removeFromCart, clearCart } from './core/storage.js';
 
 const $ = (id) => document.getElementById(id);
@@ -171,9 +172,14 @@ $('mail').addEventListener('click', async () => {
   } else {
     setStatus('');
   }
+  // どの URL を開くかは core が決める（3 面で同じ判断にするため）。
+  // popup は tabs.create で必ず新しいタブになるので「開けたか」の推定は
+  // できない（自分が作ったタブで visibility が変わるため）。
+  // したがってこの面に退路は出さず、設定（mailOpener）にそのまま従う
+  const target = resolveMailTarget({ plan, opener: profile.defaults.mailOpener });
   // tabs.create で popup が閉じるため、コピー完了を待ってから開く
   if (plan.mode === 'copy') await navigator.clipboard.writeText(plan.copyText);
-  chrome.tabs.create({ url: plan.open });
+  chrome.tabs.create({ url: target.url });
 });
 
 $('copy').addEventListener('click', async () => {

@@ -6,6 +6,7 @@ import { extractIsbn, toIsbn13 } from '../../core/isbn.js';
 import { fetchBook, mergeFallback } from '../../core/bibliography.js';
 import { withDefaults, validate, findDestination, destinationLabel } from '../../core/profile.js';
 import { composeOrder, buildMailto, pickMailPlan } from '../../core/compose.js';
+import { resolveMailTarget } from '../../core/mailopen.js';
 import { loadProfile } from '../../core/storage.js';
 import { initSettings } from './settings.js';
 
@@ -32,6 +33,27 @@ function showMessage(text, kind = 'error') {
   const box = $('errors');
   box.className = kind === 'error' ? 'bad' : 'info';
   box.textContent = text;
+}
+
+/**
+ * URL を新しいタブで開く。**この面は必ず新しいタブで開く。**
+ *
+ * 以前は plan.open を `location.href` へ代入していた（代入の形はテストが禁じて
+ * いるので書き写さない）。Gmail が mailto のハンドラだと今のタブが Gmail に
+ * 置き換わり、本文 textarea の手編集が消える。押下時点の textarea から mailto を
+ * 組み直す設計なので、編集が消えるのは機能の否定になる。
+ * 代わりに新しいタブで開く以上「開けたか」は推定できない（自分が作ったタブでも
+ * visibility は変わる）ので、**この面は推定を置かず Gmail を常設にする**。
+ */
+function openMailUrl(url) {
+  const link = document.createElement('a');
+  link.href = url;
+  link.target = '_blank';
+  link.rel = 'noopener';
+  link.style.display = 'none';
+  document.body.append(link);
+  link.click();
+  link.remove();
 }
 
 function renderList() {
@@ -218,7 +240,16 @@ function currentDraft() {
   return { ...d, body, ...buildMailto({ to: d.to, cc: d.cc, subject: d.subject, body }) };
 }
 
-$('mailto').addEventListener('click', async () => {
+/**
+ * 下書きをメーラー（または Gmail）で開く。
+ *
+ * @param {'auto'|'mailto'|'gmail'} opener この面は推定をしないので 'auto' と
+ *   'mailto' の挙動は同じ（どちらも既定のメーラー）
+ *
+ * 「メーラーで開く」と「Gmail で開く」で 1 つの経路を共有する。別々に書くと、
+ * 手編集の尊重（edited）とコピーの順序という 2 つの配慮を片方だけ落としうる。
+ */
+async function openWith(opener) {
   const d = currentDraft();
   if (!d) return;
   // 本文 textarea を手で直している場合は簡略版を候補にしない。
@@ -228,6 +259,9 @@ $('mailto').addEventListener('click', async () => {
   // 手編集が無ければ compose() と同じ入力から組み直す。textarea の本文を
   // full として渡すと、コピー経路のときに簡略版の本文をコピーしてしまう
   const plan = edited ? pickMailPlan({ full: d }) : planFrom(lastArgs);
+  // keepPage: true は「今のタブを潰さない」の意思表示。手編集した本文が
+  // 画面に残っている必要があるので、この面では必ず新しいタブで開く
+  const target = resolveMailTarget({ plan, opener, keepPage: true });
   if (plan.mode === 'copy') {
     // フォーカスが移る前にコピーを済ませる。この順序を入れ替えない
     await navigator.clipboard.writeText(plan.copyText);
@@ -244,8 +278,12 @@ $('mailto').addEventListener('click', async () => {
   } else {
     showMessage('');
   }
-  location.href = plan.open;
-});
+  openMailUrl(target.url);
+}
+
+$('mailto').addEventListener('click', () => openWith(profile.defaults.mailOpener));
+// Gmail は常設（推定ができない面なので、退路を最初から見せておく）
+$('gmail').addEventListener('click', () => openWith('gmail'));
 
 $('copy').addEventListener('click', async () => {
   const d = currentDraft();

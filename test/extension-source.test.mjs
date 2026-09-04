@@ -111,7 +111,9 @@ const CROSS_FILE_CONTRACTS = [
     path: 'src/adapters/extension/content-mail.js',
     factory: 'jimotoMakeMailActions',
     consumer: 'src/adapters/extension/content.js',
-    keys: ['openMail', 'copyBody', 'copyRemarks'],
+    // fallback は退路の DOM。落とすと「メーラーが開かない環境で退路が出ない」
+    // ＝元の症状（押しても何も起きない）にそのまま戻る
+    keys: ['openMail', 'copyBody', 'copyRemarks', 'fallback'],
   },
 ];
 
@@ -169,18 +171,23 @@ test('ファイル間の契約が提供側の return と消費側の分割代入
 
 /**
  * メール導線を持つ 3 面。どれも DOM / chrome API 依存で Node からは実行できない。
- * opener は「メーラーを開く」呼び出し。面ごとに手段が違う（拡張の content script は
- * window.open、popup は tabs.create、ローカル版は location.href）。
+ * opener は「メーラーを開く」呼び出し。面ごとに手段が違う。
+ *
+ * **opener は自前の関数名で書く。** 以前は `window.open(` / `location.href =` を
+ * 期待していたが、どちらも実機で害があって捨てた手段（前者は空白タブが残り、
+ * activation を失うと無言でブロックされる。後者は Gmail がハンドラのとき今の
+ * タブが置き換わり、ローカル版の手編集が消える）。ブラウザ API 名で固定すると
+ * 「捨てた手段に戻す」変更が緑のまま通ってしまう。
  *
  * content 側が content-mail.js なのは、下の「コピーが opener より前」が
- * pickMailPlan( 以降を slice して index を比較する＝ pickMailPlan・
+ * pickMailPlan の呼び出し以降を slice して index を比較する＝ pickMailPlan・
  * clipboard.writeText・opener が同一ファイルにあることを前提にしているため。
  * 送出シーケンスを別ファイルへ散らすとこのテストは green のまま意味を失う。
  */
 const MAIL_ADAPTERS = [
-  { path: 'src/adapters/extension/content-mail.js', opener: /window\.open\(/ },
+  { path: 'src/adapters/extension/content-mail.js', opener: /jimotoOpenMailUrl\(/ },
   { path: 'src/adapters/extension/popup.js', opener: /chrome\.tabs\.create\(/ },
-  { path: 'src/adapters/local/app.js', opener: /location\.href\s*=/ },
+  { path: 'src/adapters/local/app.js', opener: /openMailUrl\(/ },
 ];
 
 test('メール導線の 3 面が pickMailPlan を通している', () => {
@@ -189,6 +196,31 @@ test('メール導線の 3 面が pickMailPlan を通している', () => {
     // 長さ判定と 3 段階の選択を UI 側に書き写すと、面ごとに挙動がずれる
     // （SPEC「注文導線 — 情報量の多い経路から順に選ぶ」）
     assert.match(source, /pickMailPlan\(/, `${path}: pickMailPlan を通していない`);
+  }
+});
+
+test('メール導線の 3 面が resolveMailTarget を通している', () => {
+  for (const { path } of MAIL_ADAPTERS) {
+    // 「どの URL を開くか」は core の 1 箇所で決める。面ごとに mailto を
+    // 組み直すと pickMailPlan の 3 段階の判定が二重実装になり、Gmail の
+    // URL 組み立てが 3 つに増える（片方だけ直した時点で挙動がズレる）
+    assert.match(
+      read(path),
+      /resolveMailTarget\(/,
+      `${path}: resolveMailTarget を通していない`,
+    );
+  }
+});
+
+test('Gmail の URL を知っているのは core だけ', () => {
+  for (const { path } of MAIL_ADAPTERS) {
+    // 面に直書きすると view=cm / fs=1 / su= の組み立てが増殖する。
+    // とくに「コピー経路では body を載せない」の対称性は core にしかないので、
+    // 直書きした面だけ本文が黙って切られる
+    assert.ok(
+      !read(path).includes('mail.google.com'),
+      `${path}: Gmail の URL を直書きしている（core の buildGmailCompose を使う）`,
+    );
   }
 });
 
@@ -202,11 +234,85 @@ test('メール導線でクリップボード書き込みがメーラーを開�
     const openAt = tail.search(opener);
     assert.ok(copyAt !== -1, `${path}: コピー経路の clipboard.writeText が無い`);
     assert.ok(openAt !== -1, `${path}: メーラーを開く呼び出しが無い`);
-    // window.open / tabs.create でフォーカスが移ると writeText が拒否されうる。
+    // anchor.click() / tabs.create でフォーカスが移ると writeText が拒否されうる。
     // 経路 3 を単純な「開くだけ」に潰すと本文が失われる（SPEC 6）
     assert.ok(
       copyAt < openAt,
       `${path}: メーラーを開いた後にコピーしている（フォーカスが移ると拒否されうる）`
+    );
+  }
+});
+
+test('捨てた開き方に戻っていない（window.open / location.href への代入）', () => {
+  // どちらも実機で症状を出した形。名指しで禁じておく。
+  // window.open: mailto を開くと空白タブが残り、コピー経路（writeText を
+  // await した後）では transient user activation を失って無言でブロックされうる
+  assert.doesNotMatch(
+    read('src/adapters/extension/content-mail.js'),
+    /window\.open\(/,
+    'content-mail.js: window.open に戻さない。anchor を作って click する',
+  );
+  // location.href への代入: Gmail が mailto のハンドラだと今のタブが Gmail に
+  // 置き換わり、ローカル版で手編集した本文と組み立てた下書きが消える
+  assert.doesNotMatch(
+    read('src/adapters/local/app.js'),
+    /location\.href\s*=/,
+    'app.js: location.href への代入に戻さない。新しいタブで開く',
+  );
+});
+
+test('下書きを載せた anchor を light DOM に出さない', () => {
+  const source = read('src/adapters/extension/content-mail.js');
+  // anchor の href には下書き（氏名・所属・科研費の課題番号）が乗る。
+  // document.body に挿すと、ホストページから
+  // querySelectorAll('a[href^="mailto"]') で読める。パネルを closed shadow root
+  // に閉じた目的を丸ごと打ち消す
+  assert.ok(
+    !source.includes('document.body.append('),
+    'content-mail.js: anchor を light DOM に挿している（href に下書きが乗る）',
+  );
+  // 肯定側も見る。否定だけだと「append をやめて innerHTML で挿す」等で素通りする
+  assert.match(
+    source,
+    /root\.append\(/,
+    'content-mail.js: anchor は closed shadow root に挿して即座に外す',
+  );
+});
+
+test('開き方の学習は退路のクリック 1 箇所だけが行う', () => {
+  const source = read('src/adapters/extension/content-mail.js');
+  // 推定（looksUnopened）は外れうる。ハンドラの登録状況は API から照会できず、
+  // 推定の材料は visibility の変化しかない。だから推定の結果で設定を
+  // 書き換えてはいけない（外れると mailto に戻す方法が設定画面しか無くなる）。
+  // 書き換えの根拠は利用者のクリックだけ ＝ 呼び出しは 1 箇所であるべき
+  const calls = source.match(/setMailOpener\(/g) || [];
+  assert.equal(
+    calls.length,
+    1,
+    'content-mail.js: setMailOpener の呼び出しが 1 箇所でない（推定で黙って ' +
+      '切り替えていないか確認する）',
+  );
+  assert.match(
+    source,
+    /rememberGmailChoice/,
+    'content-mail.js: 退路のクリックハンドラ（rememberGmailChoice）が無い',
+  );
+});
+
+test('content.js の loadCore が core の全モジュールを読む', () => {
+  // 足し忘れると core.xxx が undefined になり、呼んだ時点の TypeError が
+  // run().catch に飲まれて「パネルが静かに出ない」だけが残る。
+  // 読み先を src/core/ にするのは、拡張側の core/ が sync-core.mjs の生成物
+  // （git 管理外）で、同期前でもこのテストが意味を持つようにするため
+  const loadCore = read('src/adapters/extension/content.js');
+  const coreModules = readdirSync(new URL('../src/core/', import.meta.url))
+    .filter((name) => name.endsWith('.js'))
+    .sort();
+  assert.ok(coreModules.length > 0, 'src/core に .js が無い');
+  for (const name of coreModules) {
+    assert.ok(
+      loadCore.includes(`core/${name}`),
+      `content.js の loadCore() が core/${name} を import していない`,
     );
   }
 });

@@ -35,6 +35,7 @@ src/core/                環境非依存のロジック。ここに副作用と 
   bibliography.js        openBD 照会とフォールバック合成
   profile.js             設定スキーマ・既定値・バリデーション
   compose.js             注文メールの組み立て（本体）
+  mailopen.js            どの URL をどう開くか（Gmail / mailto の切り替えと推定）
   storage.js             chrome.storage / localStorage の抽象化
 src/adapters/extension/  Chrome 拡張（MV3）
   content-sites.js       JIMOTO_SITES（サイト別セレクタ）・jimotoPageText
@@ -157,6 +158,26 @@ npm run build     # dist/bookstore-<version>.zip を作る
   簡略版は書名と ISBN を必ず残す（ISBN の 1 桁違いに人が気づける唯一の手がかり）。
   利用者が書いた `message` / `item.note` があるときは `composeOrder` が
   `compact` を無視してフル版に戻す。ここを UI 側の判定に移さない。
+- **`mailto:` は「渡す先が無いと無反応」。長さの問題ではない。**
+  Chrome は登録済みのハンドラか OS の既定メーラーに投げるだけなので、
+  どちらも無いと**エラーも出さずに何も起きない**（2026-09-04 に実機で確定した
+  「Gmail が立ち上がらない」の原因は、Gmail が `mailto` のハンドラとして
+  登録されていなかったこと）。**登録状況は API から照会できない**ので、
+  推定（`looksUnopened`）と退路（Gmail 直リンク）以外に手が無い。
+  `MAILTO_SAFE_LENGTH` を触ってこれを直そうとしないこと（上の 3 段階の話とは
+  別問題。二重エンコードの膨張率は 1.63 倍で、どの経路も上限に届かない）。
+  開き方の分岐は `src/core/mailopen.js` に閉じ、3 面はどれも
+  `resolveMailTarget` を通す（Gmail の URL を面に直書きしない）。
+- **パネルの `mailto` は `target` なしの `<a>` で開く。** `target="_blank"` を
+  足すと、自分が作った新しいタブで visibility が変わるため、mailto が不発でも
+  「開けた」と誤判定して退路が出なくなる。**テストは green のまま症状だけが
+  戻る**ので、知らずに足す事故が起きやすい。新しいタブで開く面
+  （popup・ローカル版）は同じ理由で推定を持てない（→ SPEC「メールの開き方」）。
+  anchor は `document.body` ではなく **closed shadow root に挿して即座に外す**
+  （href に氏名・所属・科研費の課題番号が乗るため）。`window.open` にも
+  戻さない（空白タブが残り、コピー経路では activation を失いうる）。
+  推定が外れても設定は書き換えない。`setMailOpener` を呼ぶのは退路の
+  クリックハンドラ 1 箇所だけ（出現回数をテストが固定している）。
 - **ASIN ≠ ISBN。** 和書はだいたい一致するが、Kindle 版・洋書・ISBN-13 のみの
   新刊では一致しない。必ず `isValidIsbn10` を通す。
 - **MV3 の content script は ESM ではない。** `chrome.runtime.getURL` +
