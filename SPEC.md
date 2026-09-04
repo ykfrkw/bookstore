@@ -312,9 +312,10 @@ Amazon 等のページ上で動く任意のスクリプトが
 `storage.js` だけが環境を判定する（`chrome.storage` → `localStorage` →
 メモリ）。それ以外の core は完全に純粋。
 
-拡張の content script は 4 ファイルに分かれている。`manifest.json` の
+拡張の content script は 5 ファイルに分かれている。`manifest.json` の
 `content_scripts[0].js` に
-`content-sites.js` → `content-ui.js` → `content-mail.js` → `content.js` の順で
+`content-sites.js` → `content-ui.js` → `content-mail.js` → `content-panel.js` →
+`content.js` の順で
 並べた **classic script** で、ESM ではないためトップレベル宣言を同じ
 isolated world で共有する（ファイル間の `import` 文は無い。契約は
 `JIMOTO_` / `jimoto` 接頭で grep する）。順序を変えると `JIMOTO_SITES` の参照が
@@ -334,6 +335,7 @@ URL が変われば全ファイルがロード済みなので成功する——�
 | `content-sites.js` | `JIMOTO_SITES`（サイト別セレクタ）・`jimotoPageText` |
 | `content-ui.js` | `jimotoUrl` / `jimotoEl` / `jimotoToast` / `jimotoInjectPanelStyle` |
 | `content-mail.js` | `jimotoMakeMailActions` —— `pickMailPlan` → コピー → メーラーの 3 手 |
+| `content-panel.js` | `jimotoBuildOrderForm` —— 注文先・支払・財源・冊数の入力欄と `clampQty` |
 | `content.js` | パネルの組み立てと差し込み、URL 監視、`attachShadow` |
 
 サイト別の DOM セレクタは `content-sites.js` の `JIMOTO_SITES` 1 箇所に集める。

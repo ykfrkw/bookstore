@@ -32,7 +32,13 @@
         "https://www.kinokuniya.co.jp/*",
         "https://www.maruzenjunkudo.co.jp/*"
       ],
-      "js": ["content-sites.js", "content-ui.js", "content-mail.js", "content.js"],
+      "js": [
+        "content-sites.js",
+        "content-ui.js",
+        "content-mail.js",
+        "content-panel.js",
+        "content.js"
+      ],
       "css": ["content.css"],
       "run_at": "document_idle"
     }
