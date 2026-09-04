@@ -21,7 +21,7 @@ test('localStorage backend: 壊れた JSON は null 扱いで落ちない', asyn
 
 test('localStorage backend: set → get の round-trip', async () => {
   const store = createStorage();
-  const value = { requester: { name: '古川 由己' }, fundingSources: [{ id: 'a' }] };
+  const value = { requester: { name: 'テスト 太郎' }, fundingSources: [{ id: 'a' }] };
   await store.set('bookstore.rt', value);
   assert.deepEqual(await store.get('bookstore.rt'), value);
   assert.equal(await store.get('bookstore.missing'), null);
