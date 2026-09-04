@@ -515,6 +515,31 @@ test('popup の注文メールが冊数を DOM の入力欄から読む', () => 
   );
 });
 
+test('popup のタブ表示が CSS と JS の対になっている', () => {
+  // popup.html は 2 通りの開かれ方をする（ツールバーの popup と、注入パネルの
+  // 「注文リスト」から開くタブ）。タブでは 340px 固定を解く必要があるが、
+  // CSS と付与側のどちらが欠けても**例外は出ない**。片方だけ残ると、
+  // タブで開いた注文リストが画面の左端に細長い柱として出る（読めるので
+  // 「そういうデザイン」に見えてしまい、壊れていると気づきにくい）
+  assert.match(
+    read('src/adapters/extension/popup.html'),
+    /body\.tab\s*\{/,
+    'popup.html に body.tab の定義が無い（タブで 340px の柱になる）',
+  );
+  assert.match(
+    readCode('src/adapters/extension/popup.js'),
+    /classList\.add\('tab'\)/,
+    "popup.js が body へ 'tab' クラスを付けていない（body.tab が効かない）",
+  );
+  // 判定は chrome.tabs.getCurrent（popup では undefined）。?tab=1 のような URL の
+  // 契約に戻すと、開く側が付け忘れた時点で静かに popup 幅のまま出る
+  assert.match(
+    readCode('src/adapters/extension/popup.js'),
+    /chrome\.tabs\.getCurrent\(\)/,
+    'popup.js がタブモードを chrome.tabs.getCurrent() で判定していない',
+  );
+});
+
 test('package.json と manifest.json の version が一致する', () => {
   const packageVersion = JSON.parse(read('package.json')).version;
   const manifestVersion = JSON.parse(read('src/adapters/extension/manifest.json')).version;

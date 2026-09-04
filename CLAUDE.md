@@ -110,12 +110,12 @@ service worker を実際に import し、その import 先が生成物なので�
   ファイル間の契約は grep できるように `JIMOTO_` / `jimoto`
   接頭で統一する（`el` のような裸の名前を新しく足さない）。
   ただし `content.js` は分割前からの裸のグローバルを既に持っている:
-  **`PANEL_ID` / `loadCore` / `openOptions` / `buildPanel` /
-  `mount` / `run` / `tick` / `lastHref`**（改名はしない。churn が大きく利益が
-  小さい）。**`clampQty` は同じ由来の裸のグローバルだったが `src/core/cart.js`
+  **`PANEL_ID` / `loadCore` / `requestBackground` / `openOptions` / `openCart` /
+  `buildPanel` / `mount` / `run` / `tick` / `lastHref`**（改名はしない。churn が
+  大きく利益が小さい）。**`clampQty` は同じ由来の裸のグローバルだったが `src/core/cart.js`
   へ移した**（popup・ローカル版と 3 重複していたため）。content script からは
   `loadCore()` 経由の `core.clampQty` で使う。
-  全ファイルが同じ字句環境を共有するので、別ファイルでこの 8 個を
+  全ファイルが同じ字句環境を共有するので、別ファイルでこの 10 個を
   再宣言すると `SyntaxError: Identifier 'mount' has already been declared` で
   そのファイルの注入が丸ごと死ぬ。新しく書くときはこの一覧を避けること。
   分割を `chrome.runtime.getURL` + 動的 `import()` に変えないこと。分割した
@@ -224,6 +224,24 @@ service worker を実際に import し、その import 先が生成物なので�
   露出面を増やすので採らない。MV3 の service worker は ephemeral で
   「Receiving end does not exist」が返りうるので、`chrome.runtime.lastError` を
   必ず読んで失敗を利用者に見せる。
+- **`chrome.action.openPopup` は content script からは呼べない。** Chrome 127+ に
+  **存在する**ので使えそうに見えるのが罠。(a) content script に `chrome.action` は
+  露出せず `undefined`、(b) service worker 経由で呼んでもユーザージェスチャを
+  要求されるため `sendMessage` からの呼び出しでは失敗する。
+  **カートは `background.js` で `chrome.tabs.create` して `popup.html` をタブとして
+  開く**（`'jimoto:open-cart'`）。ツールバーの popup と同じページなので実装の重複が
+  ゼロで、`tabs` 権限も `web_accessible_resources` への追加も要らない
+  （`tabs.create` は URL を読まず、拡張自身の呼び出しなので WAR は無関係）。
+  `popup.html` は開かれ方が 2 通りになるので、**タブモードだけ 340px 固定を解く**
+  （`body.tab`。判定は `chrome.tabs.getCurrent()` が popup で `undefined` を返すこと。
+  `?tab=1` のような URL の契約は作らない）。`test/manifest.test.mjs` が
+  「`openPopup` をどこでも呼んでいない」「`popup.html` を WAR に出していない」を、
+  `test/extension-source.test.mjs` が `body.tab` の CSS/JS 対を固定している。
+- **content script から background に頼む処理は `requestBackground` を通す。**
+  失敗トーストの単発化・文脈の前置・`sendMessage` の**同期 throw** の catch という
+  3 つの配慮が畳み込んである。型ごとに別実装を書くと、どれかが落ちた版が生まれて
+  「押しても何も起きない」が再発する。文言（何を開くか・自力で辿り着く道）だけを
+  `JIMOTO_BACKGROUND_REQUESTS` に足すこと。
 - **MV3 のバッジ（`chrome.action.*`）はブラウザセッションを越えて永続しない。**
   Chrome を再起動するとカートが残っていてもバッジだけ消える（SW が idle で
   停止しただけなら消えない）。だから `background.js` は

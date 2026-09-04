@@ -223,9 +223,22 @@
   margin-top: 6px;
 }
 
-.jimoto-settings {
-  display: inline-block;
+/*
+ * パネル末尾の二次導線（「設定」「注文リスト（N点）」）を並べる行。
+ *
+ * 行が位置（margin-top）を持ち、リンク側は見え方だけを持つ。リンク 1 つ 1 つに
+ * margin-top を持たせると、2 つ目を足したときに縦の間隔が二重にかかる。
+ *
+ * ピル（.jimoto-btn）を 3 つに増やさずテキストリンクにするのは、主導線が
+ * 縦積み 2 段という階層（SPEC「主導線のボタン階層」）を崩さないため。
+ */
+.jimoto-links {
+  display: flex;
+  gap: 12px;
   margin-top: 10px;
+}
+
+.jimoto-links a {
   color: var(--muted-foreground);
   font-size: 11px;
   text-decoration: underline;

@@ -1,7 +1,8 @@
 /**
  * background service worker。役割は 2 つ。
  *
- * 1. **設定画面を開く代理実行。** chrome.runtime.openOptionsPage は拡張ページ
+ * 1. **拡張ページを開く代理実行。** 設定画面（options.html）と注文リスト
+ *    （popup.html）。chrome.runtime.openOptionsPage は拡張ページ
  *    （popup / options / background）専用の API で content script には存在しない。
  *    content script からは sendMessage で依頼を投げ、ここで代理実行する。
  * 2. **ツールバーアイコンのバッジ更新。** カートの点数を出す。
@@ -17,6 +18,22 @@ import { CART_KEY, loadCart } from './core/storage.js';
 import { badgeText } from './core/cart.js';
 
 const OPEN_OPTIONS = 'jimoto:open-options';
+const OPEN_CART = 'jimoto:open-cart';
+
+/**
+ * 注文リストの実体。ツールバーの popup と**同じページをタブとして開く**。
+ *
+ * chrome.action.openPopup は Chrome 127+ に存在するが使えない。content script に
+ * chrome.action は露出せず、ここ（SW）から呼んでもユーザージェスチャを要求されて
+ * メッセージ経由の呼び出しでは失敗する。タブで開けば popup.js をそのまま再利用
+ * できるので、実装の重複がゼロで済む（→ SPEC「カートへの導線」）。
+ *
+ * **`tabs` 権限は要らない。** tabs.create は URL やタイトルを読まないので
+ * 権限なしで呼べる。**web_accessible_resources への追加も要らない。**
+ * WAR はホストページからの参照を許すための宣言で、ここは拡張自身の呼び出し。
+ * どちらも test/manifest.test.mjs が「増えていないこと」で固定している。
+ */
+const CART_PAGE = 'popup.html';
 
 /**
  * バッジの色。**content.css のトークンと同値**:
@@ -66,14 +83,25 @@ async function refreshBadge() {
  * 各 handler は onMessage と同じ規約で、`true` を返すと非同期に sendResponse する。
  *
  * 呼び出しは `HANDLERS[type](message, sendResponse)` で、**`sender` は渡していない**。
- * 今ある型はどれも送信元を見ないので足していない（YAGNI）。将来 tab id が要る型
- * （例: カートのタブを開く）を足すときは、ここのシグネチャを変える必要がある。
+ * 今ある型はどれも送信元を見ないので足していない（YAGNI）。カートのタブも
+ * 送信元とは無関係な新しいタブとして開くので sender は要らない。将来
+ * 送信元のタブを見る型を足すときに、ここのシグネチャを変える。
  */
 const HANDLERS = {
   [OPEN_OPTIONS]: (_message, sendResponse) => {
     chrome.runtime.openOptionsPage(() => {
       const error = chrome.runtime.lastError;
       if (error) console.warn('[jimoto] openOptionsPage に失敗', error.message);
+      sendResponse({ ok: !error, error: error?.message });
+    });
+    return true; // 非同期に sendResponse する
+  },
+  // 失敗の扱いは OPEN_OPTIONS と同じ形。lastError を読んで { ok, error } を返し、
+  // 送信側（content script）が利用者に見せる。握り潰すと「押しても何も起きない」に戻る
+  [OPEN_CART]: (_message, sendResponse) => {
+    chrome.tabs.create({ url: chrome.runtime.getURL(CART_PAGE) }, () => {
+      const error = chrome.runtime.lastError;
+      if (error) console.warn('[jimoto] 注文リストのタブを開けなかった', error.message);
       sendResponse({ ok: !error, error: error?.message });
     });
     return true; // 非同期に sendResponse する

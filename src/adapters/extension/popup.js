@@ -15,6 +15,20 @@ let profile;
 let cart = [];
 
 /**
+ * このページがタブとして開かれているか（注入パネルの「注文リスト」から）。
+ *
+ * ツールバーの popup と同じ popup.html をタブでも開く（chrome.action.openPopup が
+ * content script から使えないため。→ SPEC「カートへの導線」）。両者で違うのは
+ * **メールを開いた後に自分が閉じるかどうか**だけなので、差はここ 1 つに閉じる。
+ *
+ * 判定に `chrome.tabs.getCurrent()` を使う: popup では undefined、タブでは Tab を
+ * 返す。**`tabs` 権限は要らない**（自分自身のタブなので）。`?tab=1` のような URL の
+ * 契約を作らずに済むのが利点で、そうしておけば「タブで開く側が付け忘れる」形の
+ * 壊れ方が生まれない。
+ */
+let inTab = false;
+
+/**
  * 表示中の行と、その行の冊数入力欄。`renderCart` で作り直す。
  *
  * **注文メールが読む冊数はここ（DOM）が唯一の真。** 保存（`setCartQuantity`）は
@@ -111,9 +125,10 @@ function draft(compact = false) {
 
 /**
  * メールボタンの下に「どの経路で開くか」を押す前に出す。
- * popup は chrome.tabs.create で即座に閉じるため、クリック後に書いた案内は
- * 切り離し表示のときしか読めない。SPEC の「経路 2 で開いたことは必ず利用者に
- * 伝える」を満たすには、押す前に静的に見せておくしかない。
+ * popup モードでは chrome.tabs.create で即座に閉じるため、クリック後に書いた
+ * 案内は読めない（タブモードでは閉じないので読める）。SPEC の「経路 2 で
+ * 開いたことは必ず利用者に伝える」を popup モードでも満たすには、押す前に
+ * 静的に見せておくしかない。**タブでも読めるからと押す前の予告を外さないこと。**
  */
 function renderMailHint() {
   const hint = $('mail-hint');
@@ -143,6 +158,11 @@ function setStatus(message, kind = 'error') {
 }
 
 async function init() {
+  // 幅と余白だけがタブモードで変わる（popup.html の body.tab）。
+  // 判定の理由は inTab の宣言に書いてある
+  inTab = Boolean(await chrome.tabs.getCurrent());
+  if (inTab) document.body.classList.add('tab');
+
   profile = withDefaults(await loadProfile());
   cart = await loadCart();
 
@@ -189,8 +209,8 @@ $('mail').addEventListener('click', async () => {
   // 情報量の多い経路から順に試す（フル版 → 簡略版 → コピー）。
   // popup には自由記述の入力欄が無いので簡略版は常に候補にできる
   const plan = pickMailPlan({ full: draft(), compact: draft(true) });
-  // 利用者への案内はクリック前の #mail-hint が本体。ここは popup を切り離して
-  // 開いている場合にだけ読める補助（tabs.create で popup は即座に閉じる）
+  // 利用者への案内はクリック前の #mail-hint が本体。ここは閉じない場合
+  // （タブモード、または popup を切り離して開いている場合）にだけ読める補助
   if (plan.mode === 'compact') {
     setStatus('本文入りでメーラーを開きました（簡略版の文面）', 'info');
   } else if (plan.mode === 'copy') {
@@ -203,9 +223,13 @@ $('mail').addEventListener('click', async () => {
   // できない（自分が作ったタブで visibility が変わるため）。
   // したがってこの面に退路は出さず、設定（mailOpener）にそのまま従う
   const target = resolveMailTarget({ plan, opener: profile.defaults.mailOpener });
-  // tabs.create で popup が閉じるため、コピー完了を待ってから開く
+  // popup モードでは tabs.create の時点でこのページが閉じるため、コピー完了を
+  // 待ってから開く（await を後ろに回すと書き込み前に文脈ごと消える）
   if (plan.mode === 'copy') await navigator.clipboard.writeText(plan.copyText);
   chrome.tabs.create({ url: target.url });
+  // タブモードでは開いたあともこのページが残る。予告（#mail-hint）は
+  // 「これから何が起きるか」の文言なので、残るなら現在の状態で出し直す
+  if (inTab) renderMailHint();
 });
 
 $('copy').addEventListener('click', async () => {
