@@ -97,7 +97,11 @@ test('web_accessible_resources に content script が fetch/import する資産�
 });
 
 test('permissions は storage だけ', () => {
-  // 権限を増やさない方針の固定。sendMessage は無条件に使えるので追加は不要
+  // 権限を増やさない方針の固定。sendMessage は無条件に使えるので追加は不要。
+  // **バッジ（chrome.action.setBadgeText / setBadgeBackgroundColor /
+  // setBadgeTextColor）にも追加権限は要らない。** manifest に "action" を
+  // 宣言してあれば呼べる（調査で確定）。ここが増えたら「バッジのために
+  // 権限が必要」という誤解が入り込んだ合図なので、この deepEqual を緩めない
   assert.deepEqual(manifest.permissions, ['storage']);
 });
 
@@ -165,12 +169,78 @@ test('JIMOTO_SITES の定義と参照が対になっている', () => {
   assert.match(readExtensionFile('content.js'), /JIMOTO_SITES/);
 });
 
-test('background.js は onMessage listener をトップレベルで同期登録する', () => {
-  // MV3 の SW は idle で停止し、メッセージ受信で起動する。起動直後の同期実行中に
+test('background.js は listener をすべてトップレベルで同期登録する', () => {
+  // MV3 の SW は idle で停止し、イベント受信で起動する。起動直後の同期実行中に
   // 登録が終わっていないとイベントを取りこぼすため、await の後ろや関数の中に
   // 入れてはいけない。行頭一致で「ネストしていない」ことを固定する
+  // （`async function init() { … }` にまとめる形は一見きれいだが、
+  // 取りこぼしはエラーを出さない ——「たまにバッジが更新されない」になる）
   const background = readExtensionFile('background.js');
-  assert.match(background, /^chrome\.runtime\.onMessage\.addListener\(/m);
+  for (const registration of [
+    /^chrome\.runtime\.onMessage\.addListener\(/m,
+    /^chrome\.storage\.onChanged\.addListener\(/m,
+    /^chrome\.runtime\.onStartup\.addListener\(/m,
+    /^chrome\.runtime\.onInstalled\.addListener\(/m,
+  ]) {
+    assert.match(background, registration);
+  }
+});
+
+test('background.js は "type": "module" で宣言されている', () => {
+  // background.js は core を import する。宣言が無いと SW は起動時に
+  // `Cannot use import statement outside a module` で死に、エラーは SW の
+  // DevTools にしか出ない。バッジが出ないだけでなく onMessage も登録されず、
+  // **注入パネルの「設定」リンクまで同時に壊れる**
+  assert.equal(manifest.background?.type, 'module');
+});
+
+test('background.js はカートのキーを core から import する', () => {
+  // SW は `chrome.storage.onChanged` の changes からカートを拾うのでキー文字列が
+  // 要る。リテラルで書くと storage.js と 2 箇所になり、片方だけ直した時点で
+  // onChanged が一致しなくなって**バッジが黙って止まる**（エラーは出ない）
+  const background = readExtensionFile('background.js');
+  assert.match(background, /^import .* from '\.\/core\//m);
+  assert.ok(
+    !background.includes("'bookstore.cart'"),
+    "background.js に 'bookstore.cart' を直書きしない（core/storage.js の CART_KEY を import する）",
+  );
+});
+
+/**
+ * content.css からトークンの値を抜く。
+ *
+ * SW は CSS を読めないので、バッジの色リテラルが JS に入るのは避けられない。
+ * せめて「CSS の値と対であること」をテストで固定する。
+ * 2 つのテストに分けてあるのは、色を間違えたときに**両方**が落ちてほしいため
+ * （1 つにまとめると最初の assert で止まり、「赤を使っていないか」は
+ * 検査されないまま終わる）。
+ */
+const cssTokenValue = (name) =>
+  readExtensionFile('content.css')
+    .match(new RegExp(`--${name}:\\s*([^;]+);`))?.[1]
+    ?.trim();
+
+test('バッジの背景色が content.css の --primary と同値', () => {
+  // 「含む」ではなく**定数に代入された値**を見る。`includes` だけだと、
+  // 色を変えてもコメントに書かれた元の値が一致して green のまま通ってしまう
+  // （実際にそうなった。壊して確認したときに 1 本しか落ちなくて気づいた）
+  const primary = cssTokenValue('primary');
+  assert.ok(primary, 'content.css から --primary の値を取り出せない');
+  const declared = readExtensionFile('background.js').match(
+    /BADGE_BACKGROUND\s*=\s*['"]([^'"]+)['"]/,
+  )?.[1];
+  assert.equal(declared, primary, `バッジの背景色が --primary (${primary}) と一致しない`);
+});
+
+test('バッジに --destructive の色を使わない', () => {
+  // 赤はエラー専用（SPEC「トークン」/「バッジ」）。カートに本が入っているのは
+  // 正常な状態なので、エラー色で出すと「壊れた」と読まれる
+  const destructive = cssTokenValue('destructive');
+  assert.ok(destructive, 'content.css から --destructive の値を取り出せない');
+  assert.ok(
+    !readExtensionFile('background.js').includes(destructive),
+    `バッジに --destructive (${destructive}) を使わない（赤はエラー専用）`,
+  );
 });
 
 test('退路の .jimoto-fallback が CSS と対になっている', () => {

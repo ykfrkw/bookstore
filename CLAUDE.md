@@ -215,6 +215,36 @@ npm run build     # dist/bookstore-<version>.zip を作る
   露出面を増やすので採らない。MV3 の service worker は ephemeral で
   「Receiving end does not exist」が返りうるので、`chrome.runtime.lastError` を
   必ず読んで失敗を利用者に見せる。
+- **MV3 のバッジ（`chrome.action.*`）はブラウザセッションを越えて永続しない。**
+  Chrome を再起動するとカートが残っていてもバッジだけ消える（SW が idle で
+  停止しただけなら消えない）。だから `background.js` は
+  **`chrome.runtime.onStartup` と `chrome.runtime.onInstalled` の両方**で
+  `loadCart()` → バッジ再適用をする。`onInstalled` だけだと再起動を拾えず、
+  `onStartup` だけだとインストール直後・更新直後・`chrome://extensions` の
+  再読み込み直後を拾えない。**どちらの取りこぼしもエラーを出さない**ので、
+  片方を「重複」と見て消さないこと。色も毎回入れ直す（初回だけ塗る形にすると
+  再起動後に Chrome の既定色＝赤のバッジが出る。赤はエラー専用）。
+  `setInterval` / `alarms` での定期更新はしない（SW を無用に延命させる）。
+  バッジは点数（`cart.length`）で、色は `--primary`・前景は白（→ SPEC「バッジ」）。
+- **バッジの更新契機は `chrome.storage.onChanged` 1 本。** SW でトップレベルに
+  同期登録する（`onMessage` と同じ理由。起動直後の同期実行中に登録が終わって
+  いないとイベントを取りこぼす。行頭一致で `test/manifest.test.mjs` が固定）。
+  メッセージ方式に変えないこと。カートを書き込む経路は現在 3 つ（パネルの追加・
+  popup の冊数変更／削除・送信後のクリア）あり、全部 `chrome.storage.local` に
+  落ちるので `onChanged` なら 1 箇所で足りる。メッセージ方式にすると経路ごとに
+  送信コードが要り、1 つ落とした時点で**バッジが黙ってズレる**。
+  `changes[CART_KEY].newValue` を使い `loadCart()` を呼び直さない（往復が増え、
+  通知の値と読んだ値が食い違う窓ができる）。キーは `storage.js` の
+  `CART_KEY` を import する（リテラルを書くと片方だけ直したときに一致しなくなる）。
+- **`background.js` に `import` を足すなら `manifest.json` の
+  `background.type: "module"` も同時に足す。** 無いと SW は起動時に
+  `Cannot use import statement outside a module` で死に、エラーは**SW の
+  DevTools にしか出ない**。バッジが出ないだけでは済まず、`onMessage` も
+  登録されないので**注入パネルの「設定」リンクまで同時に壊れる**。
+  逆に、`background.js` 冒頭のコメントを読んで manifest 側を「不要」と判断して
+  消すのも同じ事故。`test/manifest.test.mjs` が両方向を固定してある。
+  **`src/core/` を編集したら `npm run sync`**（未 sync だと SW の
+  `./core/*.js` の解決に失敗し、これも import 失敗として静かに死ぬ）。
 - **`file://` ではローカル版が動かない。** ES module が CORS で弾かれるため、
   必ず `npm run local`（http 経由）で開く。
 

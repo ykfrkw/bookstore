@@ -8,7 +8,7 @@
     "sync": "node scripts/sync-core.mjs",
     "dev": "node scripts/sync-core.mjs --watch",
     "local": "node scripts/sync-core.mjs && npx --yes http-server@14.1.1 src -p 8787 -c-1 -o /adapters/local/index.html",
-    "test": "node --test \"test/*.test.mjs\"",
+    "test": "node scripts/sync-core.mjs && node --test \"test/*.test.mjs\"",
     "build": "node scripts/sync-core.mjs && node scripts/pack.mjs"
   },
   "devDependencies": {}
