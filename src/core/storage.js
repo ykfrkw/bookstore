@@ -82,15 +82,47 @@ export async function loadCart() {
   return (await store.get(CART_KEY)) || [];
 }
 
-export async function addToCart(item) {
-  const cart = await loadCart();
-  const i = cart.findIndex((x) => x.book?.isbn13 === item.book?.isbn13);
-  // 加算後も clampQty を通す。保存済みのカートに 0 や NaN が残っていると
-  // （旧版・手編集・壊れた JSON の復元）加算しても 0 以下のままになりうる
-  if (i >= 0) cart[i].quantity = clampQty((cart[i].quantity ?? 1) + (item.quantity ?? 1));
-  else cart.push({ quantity: 1, note: '', ...item });
-  await store.set(CART_KEY, cart);
-  return cart;
+/**
+ * カートへの書き込みを直列化する。
+ *
+ * なぜ必要か: カートの更新はどれも read-modify-write（`loadCart` →
+ * 加工 → `store.set`）で、backend の get / set はどちらも await を挟む。
+ * popup では**冊数の `change` と × の `click` が同一ジェスチャで並ぶ** ——
+ * × を押すと input が blur して `change` が先に同期発火するため、両方が
+ * `set` の前に `get` を終える。実測で「A の冊数を 5 にした直後に B を削除」
+ * すると A の 5 が消え（lost update）、逆順では削除した B が復活していた。
+ * `setCartQuantity` の「未知の ISBN は no-op」は、削除された本の**隣**を
+ * 触った経路には効かない。
+ *
+ * 限界も書いておく: 異なる面（popup タブと content script）は event loop が
+ * 別なので、この直列化では並びを揃えられない。閉じられるのは同一面の窓だけ。
+ */
+let cartWrites = Promise.resolve();
+const serializeCartWrite = (task) => {
+  // then の第 2 引数にも task を渡す。前の書き込みが失敗しても次を止めない
+  const next = cartWrites.then(task, task);
+  // 待ち行列側では reject を吸う（吸わないと unhandled rejection になる）。
+  // 呼び出し元には元の promise を返すので、失敗はそのまま伝わる
+  cartWrites = next.catch(() => {});
+  return next;
+};
+
+export function addToCart(item) {
+  return serializeCartWrite(async () => {
+    const cart = await loadCart();
+    const i = cart.findIndex((x) => x.book?.isbn13 === item.book?.isbn13);
+    // 加算後も clampQty を通す。保存済みのカートに 0 や NaN が残っていると
+    // （旧版・手編集・壊れた JSON の復元）加算しても 0 以下のままになりうる
+    if (i >= 0) {
+      cart[i] = { ...cart[i], quantity: clampQty((cart[i].quantity ?? 1) + (item.quantity ?? 1)) };
+    } else {
+      // quantity をスプレッドの**後ろ**に置く。前に置くと item.quantity が
+      // 既定値を上書きして clampQty を素通りし、0 冊のまま push される
+      cart.push({ note: '', ...item, quantity: clampQty(item.quantity ?? 1) });
+    }
+    await store.set(CART_KEY, cart);
+    return cart;
+  });
 }
 
 /**
@@ -103,23 +135,35 @@ export async function addToCart(item) {
  * 未知の ISBN は no-op でカートをそのまま返す。popup を開いたまま別のタブで
  * 削除された、という並びは実際に起こる。そこで throw しても popup 側には
  * 出しようが無いし、消えた本を復活させるのは明確に間違い。
+ * （ただしこれは「触った本そのものが消えた」場合しか救わない。隣の本を
+ * 触った経路は serializeCartWrite が受け持つ。）
  */
-export async function setCartQuantity(isbn13, quantity) {
-  const cart = await loadCart();
-  const i = cart.findIndex((x) => x.book?.isbn13 === isbn13);
-  if (i < 0) return cart;
-  cart[i] = { ...cart[i], quantity: clampQty(quantity) };
-  await store.set(CART_KEY, cart);
-  return cart;
+export function setCartQuantity(isbn13, quantity) {
+  return serializeCartWrite(async () => {
+    const cart = await loadCart();
+    const i = cart.findIndex((x) => x.book?.isbn13 === isbn13);
+    if (i < 0) return cart;
+    // 要素を丸ごと差し替える。1 行で「新しい冊数の入った行」と読めるので、
+    // 変える値が増えたときも差分が追いやすい（addToCart も同じ流儀）
+    cart[i] = { ...cart[i], quantity: clampQty(quantity) };
+    await store.set(CART_KEY, cart);
+    return cart;
+  });
 }
 
-export async function removeFromCart(isbn13) {
-  const cart = (await loadCart()).filter((x) => x.book?.isbn13 !== isbn13);
-  await store.set(CART_KEY, cart);
-  return cart;
+export function removeFromCart(isbn13) {
+  return serializeCartWrite(async () => {
+    const cart = (await loadCart()).filter((x) => x.book?.isbn13 !== isbn13);
+    await store.set(CART_KEY, cart);
+    return cart;
+  });
 }
 
-export async function clearCart() {
-  await store.set(CART_KEY, []);
-  return [];
+export function clearCart() {
+  // 読まずに書くので lost update は起こらないが、直列化しないと他の書き込みの
+  // get と set の間に割り込め、空にした直後にカートが復活しうる
+  return serializeCartWrite(async () => {
+    await store.set(CART_KEY, []);
+    return [];
+  });
 }

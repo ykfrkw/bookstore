@@ -25,6 +25,14 @@ test('badgeText: カートの点数を返す', () => {
   assert.equal(badgeText([{ quantity: 1 }, { quantity: 1 }]), '2');
 });
 
+test('badgeText: undefined / null でも throw せず空文字', () => {
+  // storage.onChanged の newValue は remove / clear / サイトデータ削除で
+  // undefined になる。ここで throw すると service worker の中なので
+  // エラーは SW の DevTools にしか出ず、バッジが黙って止まる
+  assert.equal(badgeText(undefined), '');
+  assert.equal(badgeText(null), '');
+});
+
 test('badgeText: 冊数合計ではなく点数（1 点 5 冊は "1"）', () => {
   // バッジを冊数合計に変えないための固定。既存の唯一の数表示（パネルの
   // トースト「注文リストに追加（N点）」）と同じ数でなければならない

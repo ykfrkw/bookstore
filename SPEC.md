@@ -470,11 +470,31 @@ URL が変われば全ファイルがロード済みなので成功する——�
 | `content-sites.js` | `JIMOTO_SITES`（サイト別セレクタ）・`jimotoPageText` |
 | `content-ui.js` | `jimotoUrl` / `jimotoEl` / `jimotoToast` / `jimotoInjectPanelStyle` |
 | `content-mail.js` | `jimotoMakeMailActions` —— `pickMailPlan` → コピー → メーラーの 3 手 |
-| `content-panel.js` | `jimotoBuildOrderForm` —— 注文先・支払・財源・冊数の入力欄と `clampQty` |
+| `content-panel.js` | `jimotoBuildOrderForm` —— 注文先・支払・財源・冊数の入力欄 |
 | `content.js` | パネルの組み立てと差し込み、URL 監視、`attachShadow` |
 
 サイト別の DOM セレクタは `content-sites.js` の `JIMOTO_SITES` 1 箇所に集める。
 各サイトの DOM は予告なく変わる前提で、壊れたら該当エントリだけ直せば済む状態を保つ。
+
+`test/extension-source.test.mjs` は**3 回連続で膨らんでいる**（現在 540 行前後）。
+分割の切り方は helper への共有リスト抽出（`read` / `stripComments` /
+`CONTENT_SCRIPT_SOURCES` を切り出し、面ごとの検査テーブルを分ける）。
+
+### カートの書き込み
+
+カートの更新（`addToCart` / `setCartQuantity` / `removeFromCart` / `clearCart`）は
+どれも read-modify-write なので、`storage.js` で**書き込みを 1 本の promise 鎖に
+直列化する**。popup では**冊数の `change` と × の `click` が同一ジェスチャで並ぶ**
+（× を押すと input が blur して `change` が先に同期発火する）ため、直列化が無いと
+両方が `set` の前に `get` を終え、「A の冊数を変えた直後に B を削除」で A の変更が
+消え、逆順では削除した B が復活する。異なる面（popup タブと content script）は
+event loop が別なので直列化しきれないが、同一面の窓は閉じる。
+
+**注文メールが読む冊数は DOM の入力欄が唯一の真**にする。保存は storage、
+本文を組む値は DOM、と出典を分ける。保存の await の後ろでモジュール変数を
+差し替える形にすると、冊数を打った直後にボタンを押したとき（blur → `change` の
+同期発火 → storage の await で中断 → click）**古い冊数で本文が組まれる**。
+パネル（`content-panel.js` の `item()`）と同じ流儀に揃えてある。
 
 ## データモデル
 

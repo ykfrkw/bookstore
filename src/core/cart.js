@@ -24,7 +24,14 @@ export function clampQty(v) {
  *     「2 点・合計 7 冊」で 7 と出るバッジは点数と読み違えられる。
  *
  * 0 点では空文字を返す（`'0'` を出すと「0 という数のバッジ」が常駐する）。
+ *
+ * `cart?.length` にしてあるのは、`undefined` / `null` が実際に届く経路が
+ * あるため。`chrome.storage.local.remove` / `clear()`（全キーが `oldValue`
+ * だけで通知される）／利用者が拡張のサイトデータを消した、のいずれでも
+ * `onChanged` の `newValue` は `undefined` になる。呼び出し側の `?? []` に
+ * 頼ると、それを 1 箇所落とした時点で service worker の中で throw し、
+ * **エラーは SW の DevTools にしか出ないままバッジが黙って止まる。**
  */
 export function badgeText(cart) {
-  return cart.length ? String(cart.length) : '';
+  return cart?.length ? String(cart.length) : '';
 }

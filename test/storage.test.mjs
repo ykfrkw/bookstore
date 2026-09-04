@@ -15,6 +15,7 @@ const {
   loadCart,
   addToCart,
   setCartQuantity,
+  removeFromCart,
   clearCart,
 } = await import('../src/core/storage.js');
 
@@ -89,4 +90,62 @@ test('setCartQuantity: 未知の ISBN では カートが変わらない', async
   assert.deepEqual(after, before);
   assert.deepEqual(await loadCart(), before);
   assert.equal(after.length, 1);
+});
+
+test('addToCart: 新規追加も clampQty を通る（0 冊で push されない）', async () => {
+  await clearCart();
+  // 呼び出し元は clamp 済みの値を渡すので今は到達しないが、新しい面が
+  // 直接 addToCart を呼ぶと 0 冊のまま保存され composeOrder に流れる
+  await addToCart(bookItem('9784000000006', 0));
+  assert.equal(rawCart()[0].quantity, 1);
+  await clearCart();
+  await addToCart(bookItem('9784000000006', '2.9'));
+  assert.equal(rawCart()[0].quantity, 2);
+});
+
+/**
+ * 書き込みの直列化。
+ *
+ * popup では冊数の `change` と × の `click` が同一ジェスチャで並ぶ
+ * （× を押すと input が blur して `change` が先に発火する）。直列化が無いと
+ * 両方が `set` の前に `get` を終え、後から書いた方が相手の変更を消す。
+ * 保存層を通さずモックの localStorage を直接読んで最終状態を見る。
+ */
+test('直列化: 冊数変更 → 削除 で冊数が消えない（lost update）', async () => {
+  await clearCart();
+  await addToCart(bookItem('9784000000007'));
+  await addToCart(bookItem('9784000000008'));
+  await Promise.all([
+    setCartQuantity('9784000000007', 5),
+    removeFromCart('9784000000008'),
+  ]);
+  assert.deepEqual(
+    rawCart().map((x) => [x.book.isbn13, x.quantity]),
+    [['9784000000007', 5]],
+  );
+});
+
+test('直列化: 削除 → 冊数変更 で削除した本が復活しない', async () => {
+  await clearCart();
+  await addToCart(bookItem('9784000000009'));
+  await addToCart(bookItem('9784000000010'));
+  await Promise.all([
+    removeFromCart('9784000000010'),
+    setCartQuantity('9784000000009', 5),
+  ]);
+  assert.deepEqual(
+    rawCart().map((x) => [x.book.isbn13, x.quantity]),
+    [['9784000000009', 5]],
+  );
+});
+
+test('直列化: 同じ本への同時 addToCart が両方数えられる', async () => {
+  await clearCart();
+  // カートタブを開いたまま書籍ページのパネルで押した、に相当する並び
+  await Promise.all([
+    addToCart(bookItem('9784000000011')),
+    addToCart(bookItem('9784000000011')),
+  ]);
+  assert.equal(rawCart().length, 1);
+  assert.equal(rawCart()[0].quantity, 2);
 });
