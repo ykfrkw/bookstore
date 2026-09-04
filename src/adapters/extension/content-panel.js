@@ -12,17 +12,11 @@
  *   test/extension-source.test.mjs の closed shadow の肯定側は content.js を読み先に
  *   固定しているので、動かすと検査の読み先がずれる（否定側は content*.js 全件を
  *   ディスクから拾うので、このファイルも自動で対象に入る）。
- * - `clampQty` は唯一の消費者である冊数入力と一緒に置く。content.js に残すと
- *   使い手のいない迷子のグローバルになる。名前は分割前から裸のままで改名しない。
+ * - `clampQty` は src/core/cart.js にある（popup・ローカル版と 3 重複していた）。
+ *   ここでは loadCore() 経由の `core.clampQty` として使う。再定義しないこと。
  * - 書誌の表示・ボタン・メールの退路といった「見せ方」は content.js のパネル木の
  *   隣に残す。読む人が探す場所と実体を一致させておく。
  */
-
-// 冊数の下限は 1。非数値・0 以下が composeOrder に流れ込むのを防ぐ
-function clampQty(v) {
-  const n = Math.floor(Number(v));
-  return Number.isFinite(n) && n >= 1 ? n : 1;
-}
 
 /**
  * 注文の入力欄を作る。
@@ -82,11 +76,11 @@ function jimotoBuildOrderForm(core, profile, book) {
     type: 'number',
     min: '1',
     inputmode: 'numeric',
-    value: String(clampQty(state.quantity)),
+    value: String(core.clampQty(state.quantity)),
   });
   // 空欄・0・マイナスのまま送信されないよう、フォーカスが外れた時点で 1 に戻す
   qty.addEventListener('change', () => {
-    qty.value = String(clampQty(qty.value));
+    qty.value = String(core.clampQty(qty.value));
   });
 
   const destinationRow = jimotoEl('div', { class: 'jimoto-row' }, [
@@ -114,7 +108,7 @@ function jimotoBuildOrderForm(core, profile, book) {
   destSel.addEventListener('change', syncVisibility);
   fundingSel.addEventListener('change', syncVisibility);
 
-  const item = () => ({ book, quantity: clampQty(qty.value) });
+  const item = () => ({ book, quantity: core.clampQty(qty.value) });
   // composeOrder / validate に渡す引数。クリック時点の UI 状態で作る
   const orderArgs = () => ({
     destinationId: destSel.value,

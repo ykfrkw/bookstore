@@ -420,6 +420,54 @@ test('content.js の loadCore が core の全モジュールを読む', () => {
   }
 });
 
+/**
+ * `clampQty` を持つ 3 面と、それぞれが core から受け取る形。
+ *
+ * この 3 つには以前まったく同じ実装が（片方はコメントまで同じで）置かれていた。
+ * 冊数の下限がずれると composeOrder に「0冊」の行が入る＝誤発注につながるので、
+ * **定義は src/core/cart.js の 1 つだけ**にして、戻らないよう固定する。
+ * content-panel.js は import を持たない classic script なので loadCore() 経由の
+ * `core.clampQty` を、拡張ページとローカル版は core/cart.js からの import を使う。
+ */
+const CLAMP_QTY_CONSUMERS = [
+  {
+    path: 'src/adapters/extension/content-panel.js',
+    via: /\bcore\.clampQty\(/,
+    how: 'loadCore() の戻りから core.clampQty で受け取る',
+  },
+  {
+    path: 'src/adapters/extension/popup.js',
+    via: /import\s*\{[^}]*\bclampQty\b[^}]*\}\s*from\s*'\.\/core\/cart\.js'/,
+    how: "'./core/cart.js' から import する",
+  },
+  {
+    path: 'src/adapters/local/app.js',
+    via: /import\s*\{[^}]*\bclampQty\b[^}]*\}\s*from\s*'\.\.\/\.\.\/core\/cart\.js'/,
+    how: "'../../core/cart.js' から import する",
+  },
+];
+
+test('clampQty を再定義している面が無い', () => {
+  for (const { path, via, how } of CLAMP_QTY_CONSUMERS) {
+    const source = readCode(path);
+    // 定義の形（宣言・代入）を禁じる。import と core.clampQty はどちらも
+    // この形に当たらないので、正しい受け取り方だけが残る
+    assert.doesNotMatch(
+      source,
+      /(?:function|const|let|var)\s+clampQty\b/,
+      `${path}: clampQty を再定義している。定義は src/core/cart.js だけに置く`,
+    );
+    assert.doesNotMatch(
+      source,
+      /\bclampQty\s*=[^=]/,
+      `${path}: clampQty に代入している。定義は src/core/cart.js だけに置く`,
+    );
+    // 肯定側。禁止だけだと「clampQty を丸ごと消して素の Number() にした」
+    // （＝下限 1 が消えて 0 冊が通る）変更が green のまま通る
+    assert.match(source, via, `${path}: clampQty を ${how} 形になっていない`);
+  }
+});
+
 test('package.json と manifest.json の version が一致する', () => {
   const packageVersion = JSON.parse(read('package.json')).version;
   const manifestVersion = JSON.parse(read('src/adapters/extension/manifest.json')).version;

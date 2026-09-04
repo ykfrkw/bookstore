@@ -7,6 +7,7 @@ import { fetchBook, mergeFallback } from '../../core/bibliography.js';
 import { withDefaults, validate, findDestination, destinationLabel } from '../../core/profile.js';
 import { composeOrder, buildMailto, pickMailPlan } from '../../core/compose.js';
 import { resolveMailTarget } from '../../core/mailopen.js';
+import { clampQty } from '../../core/cart.js';
 import { loadProfile } from '../../core/storage.js';
 import { initSettings } from './settings.js';
 
@@ -16,12 +17,6 @@ let items = [];
 let lastDraft = null;
 // lastDraft を作ったときの composeOrder 引数。簡略版を同じ入力から組むために持つ
 let lastArgs = null;
-
-// 冊数の下限は 1。非数値・0 以下が composeOrder に流れ込むのを防ぐ
-const clampQty = (v) => {
-  const n = Math.floor(Number(v));
-  return Number.isFinite(n) && n >= 1 ? n : 1;
-};
 
 /**
  * #errors への表示。赤（--destructive）はエラー専用なので、エラーでない案内は

@@ -1,17 +1,18 @@
 import { withDefaults, validate, findDestination, destinationLabel } from './core/profile.js';
 import { composeOrder, pickMailPlan } from './core/compose.js';
 import { resolveMailTarget } from './core/mailopen.js';
-import { loadProfile, loadCart, removeFromCart, clearCart } from './core/storage.js';
+import { clampQty } from './core/cart.js';
+import {
+  loadProfile,
+  loadCart,
+  setCartQuantity,
+  removeFromCart,
+  clearCart,
+} from './core/storage.js';
 
 const $ = (id) => document.getElementById(id);
 let profile;
 let cart = [];
-
-// 冊数の下限は 1。非数値・0 以下が composeOrder に流れ込むのを防ぐ
-function clampQty(v) {
-  const n = Math.floor(Number(v));
-  return Number.isFinite(n) && n >= 1 ? n : 1;
-}
 
 function renderCart() {
   const list = $('list');
@@ -22,7 +23,7 @@ function renderCart() {
     renderMailHint();
     return;
   }
-  cart.forEach((item, i) => {
+  cart.forEach((item) => {
     // 書名は Amazon 由来の文字列なので textContent で入れる（innerHTML 補間はしない）
     const row = document.createElement('div');
     row.className = 'item';
@@ -40,11 +41,15 @@ function renderCart() {
     qty.min = '1';
     qty.inputMode = 'numeric';
     qty.value = String(item.quantity ?? 1);
-    qty.addEventListener('input', () => {
-      cart[i].quantity = clampQty(qty.value);
-    });
-    qty.addEventListener('change', () => {
-      qty.value = String(clampQty(qty.value));
+    // 保存は change（フォーカスが外れる / Enter）だけで行う。input ごとに
+    // 書くと 1 桁打つ間に chrome.storage への書き込みが並び、次の PR で
+    // storage.onChanged からバッジを更新するときに無駄な発火が増える。
+    // メモリ上の配列だけ書き換えて保存しない形には戻さないこと（popup を
+    // 閉じて開き直すと冊数が戻る、という実バグだった）
+    qty.addEventListener('change', async () => {
+      const quantity = clampQty(qty.value);
+      qty.value = String(quantity);
+      cart = await setCartQuantity(item.book.isbn13, quantity);
       // 冊数でも本文の長さは動くので、経路の予告を出し直す
       renderMailHint();
     });
