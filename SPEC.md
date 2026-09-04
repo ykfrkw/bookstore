@@ -220,13 +220,24 @@ UI の分岐ではなく **`composeOrder` 側で担保する**（`compact: true`
   ような URL の契約は作らない（開く側が付け忘れると静かに柱に戻る）
 - **タブモードではメール送出後もページが残る。** popup モードは `tabs.create` の
   時点で閉じるので、経路の予告（`#mail-hint`）を押す前に出す方針は維持する
+- **タブモードは復帰時にカートを読み直す**（`visibilitychange` で `loadCart()` →
+  `renderCart()`）。長寿命のタブなので、開いたまま Amazon 側で「カートに入れる」が
+  走る。読み直さないと、注文メールが読む `rows`（この画面の DOM）は開いた時点の
+  スナップショットのままで、**あとから足した本が黙って落ちた注文メールが組まれる**
+  （「リストを空にする」は画面に一度も出ていないその本まで消す）。popup モードは
+  開くたびに新しい文書なので不要。`storage.onChanged` にしないのは、自分の書き込み
+  （冊数の `change`）でも再描画が走って入力中の欄が作り直されるため
 
 **パネル側はピルを増やさずテキストリンクにする。** 主導線は縦積み 2 段
 （→「主導線のボタン階層」）で、3 つ目のピルを足すと押してほしい順序が読めなく
 なる。既存の「設定」リンクと同じ行（`.jimoto-links`）に「注文リスト（N点）」を
-並べる。点数はパネル表示時に `loadCart()` で入れ、「カートに入れる」の戻り値で
-更新する（トーストの数・バッジの数と必ず一致させる。3 箇所で違う数を見せると
-どれが正しいか利用者に判断できない）。トーストは「注文リストに追加（N点）」まで
+並べる。点数はパネル表示時に `loadCart()` で入れ、以降は**バッジと同じく
+`chrome.storage.onChanged` で追随する**（トーストの数・バッジの数と必ず一致
+させる。3 箇所で違う数を見せるとどれが正しいか利用者に判断できない）。
+パネルが作り直されるのは `location.href` が変わったときだけなので、追加の戻り値
+だけで更新すると、カートタブや popup で削除しても同じ URL に留まる限り点数が
+古いまま残り、押すと空のリストが開く。**listener はトップレベルに 1 本だけ置いて
+更新関数の参照を差し替える**（`buildPanel` ごとに登録すると SPA 遷移のたびに溜まる）。トーストは「注文リストに追加（N点）」まで
 短くする——次の一手はリンクが担うので、文言での迂回案内が要らなくなる。
 
 ### ローカル版の導線
@@ -582,10 +593,10 @@ Amazon 等のページ上で動く任意のスクリプトが
 `storage.js` だけが環境を判定する（`chrome.storage` → `localStorage` →
 メモリ）。それ以外の core は完全に純粋。
 
-拡張の content script は 5 ファイルに分かれている。`manifest.json` の
+拡張の content script は 6 ファイルに分かれている。`manifest.json` の
 `content_scripts[0].js` に
-`content-sites.js` → `content-ui.js` → `content-mail.js` → `content-panel.js` →
-`content.js` の順で
+`content-sites.js` → `content-ui.js` → `content-bg.js` → `content-mail.js` →
+`content-panel.js` → `content.js` の順で
 並べた **classic script** で、ESM ではないためトップレベル宣言を同じ
 isolated world で共有する（ファイル間の `import` 文は無い。契約は
 `JIMOTO_` / `jimoto` 接頭で grep する）。順序を変えると `JIMOTO_SITES` の参照が
@@ -604,6 +615,7 @@ URL が変われば全ファイルがロード済みなので成功する——�
 | --- | --- |
 | `content-sites.js` | `JIMOTO_SITES`（サイト別セレクタ）・`jimotoPageText` |
 | `content-ui.js` | `jimotoUrl` / `jimotoEl` / `jimotoToast` / `jimotoInjectPanelStyle` |
+| `content-bg.js` | `jimotoRequestBackground` —— 拡張ページを開く依頼と失敗時の文言（`jimotoOpenOptions` / `jimotoOpenCart`） |
 | `content-mail.js` | `jimotoMakeMailActions` —— `pickMailPlan` → コピー → メーラーの 3 手 |
 | `content-panel.js` | `jimotoBuildOrderForm` —— 注文先・支払・財源・冊数の入力欄 |
 | `content.js` | パネルの組み立てと差し込み、URL 監視、`attachShadow` |

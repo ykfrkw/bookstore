@@ -47,6 +47,7 @@ src/core/                環境非依存のロジック。ここに副作用と 
 src/adapters/extension/  Chrome 拡張（MV3）
   content-sites.js       JIMOTO_SITES（サイト別セレクタ）・jimotoPageText
   content-ui.js          jimotoUrl / jimotoEl / jimotoToast / jimotoInjectPanelStyle
+  content-bg.js          jimotoRequestBackground / jimotoOpenOptions / jimotoOpenCart
   content-mail.js        jimotoMakeMailActions（メール送出とコピー）
   content-panel.js       jimotoBuildOrderForm（注文先・支払・財源・冊数の入力欄）
   content.js             パネルの組み立て・差し込み・URL 監視。attachShadow はここ
@@ -85,9 +86,9 @@ service worker を実際に import し、その import 先が生成物なので�
 - **`src/core/` を編集したら `npm run sync` を走らせる。** 忘れると拡張だけ
   古いコードで動き、原因の分かりにくいバグになる。`src/adapters/extension/core/`
   は生成物なので直接編集しない。
-- **content script は 5 ファイルで、順序に意味がある。** `manifest.json` の
+- **content script は 6 ファイルで、順序に意味がある。** `manifest.json` の
   `content_scripts[0].js` は
-  `content-sites.js` → `content-ui.js` → `content-mail.js` →
+  `content-sites.js` → `content-ui.js` → `content-bg.js` → `content-mail.js` →
   `content-panel.js` → `content.js` の順。
   ESM ではなく classic script なので、各ファイルのトップレベル宣言が同じ
   isolated world で共有される（`import` 文は無い）。**順序を変えると
@@ -110,12 +111,18 @@ service worker を実際に import し、その import 先が生成物なので�
   ファイル間の契約は grep できるように `JIMOTO_` / `jimoto`
   接頭で統一する（`el` のような裸の名前を新しく足さない）。
   ただし `content.js` は分割前からの裸のグローバルを既に持っている:
-  **`PANEL_ID` / `loadCore` / `requestBackground` / `openOptions` / `openCart` /
-  `buildPanel` / `mount` / `run` / `tick` / `lastHref`**（改名はしない。churn が
-  大きく利益が小さい）。**`clampQty` は同じ由来の裸のグローバルだったが `src/core/cart.js`
-  へ移した**（popup・ローカル版と 3 重複していたため）。content script からは
+  **`PANEL_ID` / `loadCore` / `buildPanel` / `mount` / `run` / `tick` /
+  `lastHref`**（改名はしない。churn が大きく利益が小さい）。
+  **`requestBackground` / `openOptions` / `openCart` は同じ由来の裸のグローバル
+  だったが、`content-bg.js` へ切り出すときに `jimoto` 接頭を付けた**
+  （`jimotoRequestBackground` / `jimotoOpenOptions` / `jimotoOpenCart`）。
+  裸のままで良いのは `content.js` に閉じている名前だけで、ファイルを跨いだ時点で
+  「契約は接頭で grep できる」という上の規約の対象になるため。残る 7 個は
+  `content.js` の中だけで使う。
+  **`clampQty` は同じ由来の裸のグローバルだったが `src/core/cart.js` へ移した**
+  （popup・ローカル版と 3 重複していたため）。content script からは
   `loadCore()` 経由の `core.clampQty` で使う。
-  全ファイルが同じ字句環境を共有するので、別ファイルでこの 10 個を
+  全ファイルが同じ字句環境を共有するので、別ファイルでこの 7 個を
   再宣言すると `SyntaxError: Identifier 'mount' has already been declared` で
   そのファイルの注入が丸ごと死ぬ。新しく書くときはこの一覧を避けること。
   分割を `chrome.runtime.getURL` + 動的 `import()` に変えないこと。分割した

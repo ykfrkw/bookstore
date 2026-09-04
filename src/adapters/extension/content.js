@@ -38,81 +38,22 @@ async function loadCore() {
 }
 
 /**
- * background に代理実行を頼む拡張ページ。**メッセージ型と失敗時の文言の対**。
+ * パネルの点数表示とカートの保存キー。buildPanel / run() が代入する可変参照。
  *
- * どちらの API（`chrome.runtime.openOptionsPage` / `chrome.tabs.create`）も
- * 拡張ページ（popup / options / background）専用で content script には存在
- * しない（CLAUDE.md「罠として知っておくこと」参照）。設定画面は以前 optional
- * call `?.()` で呼んでいて、例外も出さず静かに no-op していた（押しても何も
- * 起きない）。`?.()` の形に戻さないこと。失敗は必ず利用者に見せる。
- *
- * 型は**リテラルで書く**。MV3 では background と定数を共有できないので、
- * 対は test/manifest.test.mjs が両方向で突き合わせている（片側だけ改名すると
- * npm test は green のまま実機だけ壊れる）。
- *
- * 失敗時の文言には、必ず**その画面に自力で辿り着く道**を書く。ここが
- * 「開けませんでした」だけだと、利用者は次に何をすればいいか分からない。
+ * **listener はトップレベルに 1 本だけ置いて参照を差し替える**（buildPanel ごとに
+ * addListener すると SPA 遷移のたびに溜まる）。パネルが作り直されるのは URL が
+ * 変わったときだけ（→ tick()）なので、同じ URL に留まったまま popup / カートタブで
+ * 削除されると読み直す契機が他に無く、点数だけが古いまま残る——押すと空のリストが
+ * 開き、バッジは消えているので 2 箇所で数が食い違う。
  */
-const JIMOTO_BACKGROUND_REQUESTS = {
-  'jimoto:open-options': {
-    what: '設定画面',
-    howTo: '拡張のアイコンを右クリック →「オプション」から開いてください',
-  },
-  'jimoto:open-cart': {
-    what: '注文リスト',
-    howTo: 'ツールバーの拡張アイコンから開いてください',
-  },
-};
+let jimotoSetCartCount = null;
+let jimotoCartKey = ''; // core.CART_KEY。リテラルを重複させないので loadCore() 後に入る
 
-/**
- * 拡張ページを開く依頼を background へ投げる。
- *
- * @param {string} type JIMOTO_BACKGROUND_REQUESTS のキー
- * @param {string} [context] 呼び出し元の文脈。失敗トーストの先頭に前置する。
- *
- * **設定とカートで別実装にしないこと。** ここには 3 つの配慮が畳み込んである。
- * (a) 失敗を必ずトーストに出す（握り潰すと「押しても何も起きない」に戻る）
- * (b) `chrome.runtime.lastError` と `res.ok` の両方を見る（SW は ephemeral で
- *     「Receiving end does not exist」が返りうる）
- * (c) sendMessage の**同期 throw** を catch する（拡張の更新直後の
- *     "Extension context invalidated"。callback には来ない）
- * 片方だけ書き直すと、この 3 つのどれかが落ちた版が生まれる。
- *
- * なぜ文脈を引き回すか: トーストは常に最新の 1 枚だけを残す（→ jimotoToast()）。
- * openMail() は「設定が未入力です: …」を出した直後にここを呼ぶが、(c) の経路では
- * 失敗トーストが同じ tick 内で append される。ブラウザが描画する前に未入力トースト
- * が消えるため、文脈を引き継がないと「何が未入力か」が一度も表示されない。
- * 単発化そのものは正しいので、消える側の情報を残る側の文言に畳み込む。
- */
-function requestBackground(type, context = '') {
-  const { what, howTo } = JIMOTO_BACKGROUND_REQUESTS[type];
-  const fail = (detail) => {
-    console.warn(`[jimoto] ${what}を開けませんでした`, detail);
-    jimotoToast(`${context}${what}を開けませんでした。${howTo}`, 'error');
-  };
-  try {
-    chrome.runtime.sendMessage({ type }, (res) => {
-      const error = chrome.runtime.lastError;
-      if (error || !res?.ok) fail(error?.message || res?.error);
-    });
-  } catch (e) {
-    fail(e);
-  }
-}
-
-/** 設定画面（options.html）を開く。文脈の引き継ぎは content-mail.js が使う */
-function openOptions(context = '') {
-  requestBackground('jimoto:open-options', context);
-}
-
-/**
- * 注文リスト（popup.html）をタブで開く。ツールバーの popup を開く API
- * （chrome.action.openPopup）は content script からは使えないので、同じ
- * popup.html をタブとして開いて実装の重複を作らない（→ SPEC「カートへの導線」）。
- */
-function openCart() {
-  requestBackground('jimoto:open-cart');
-}
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'local' || !jimotoCartKey || !changes[jimotoCartKey]) return;
+  // remove / clear は newValue が undefined で通知される（→ core/cart.js）
+  jimotoSetCartCount?.((changes[jimotoCartKey].newValue ?? []).length);
+});
 
 async function buildPanel(core, book) {
   const profile = core.withDefaults(await core.loadProfile());
@@ -134,7 +75,7 @@ async function buildPanel(core, book) {
   const host = jimotoEl('div', { id: PANEL_ID, class: 'jimoto-host' });
   const shadow = host.attachShadow({ mode: 'closed' });
 
-  const ui = { toast: jimotoToast, openOptions };
+  const ui = { toast: jimotoToast, openOptions: jimotoOpenOptions };
   const { openMail, copyBody, copyRemarks, fallback } =
     jimotoMakeMailActions({ core, profile, getArgs, ui, root: shadow });
 
@@ -148,21 +89,22 @@ async function buildPanel(core, book) {
     href: '#',
     onclick: (e) => {
       e.preventDefault();
-      openCart();
+      jimotoOpenCart();
     },
   });
   const setCartCount = (count) => {
     cartLink.textContent = `注文リスト（${count}点）`;
   };
-  // 初期表示は storage から。以降は addToCart の戻りで更新するので読み直さない
+  // 初期表示は storage から。以降の更新はトップレベルの storage.onChanged が担う
+  jimotoSetCartCount = setCartCount;
   setCartCount((await core.loadCart()).length);
 
   const addCart = async () => {
     // 冊数は入力欄の現在値。getArgs() が items に畳み込んでいるのでそこから
     // 1 冊ぶんを取り出す（同じ値を作る経路を 2 本に増やさない）
     const cart = await core.addToCart(getArgs().items[0]);
-    // 追加した直後にリンクの点数を合わせる。ここを忘れると、パネルの数だけが
-    // 古いままバッジと食い違う（どちらが正しいか利用者に判断できない）
+    // 自分の書き込みも onChanged で戻ってくるが、ここでも合わせる。トーストと
+    // 同じ tick で確定させておけば、通知が遅れてもこの 2 つは食い違わない
     setCartCount(cart.length);
     // 次の一手はリンクが担うので、トーストは結果だけを短く出す
     jimotoToast(`注文リストに追加（${cart.length}点）`);
@@ -221,7 +163,7 @@ async function buildPanel(core, book) {
         href: '#',
         onclick: (e) => {
           e.preventDefault();
-          openOptions();
+          jimotoOpenOptions();
         },
       }),
       cartLink,
@@ -263,6 +205,7 @@ async function run() {
   if (!site) return; // 対応サイト以外では何もしない
 
   const core = await loadCore();
+  jimotoCartKey = core.CART_KEY; // 以降 storage.onChanged がカートの変化を拾える
   const { isbn13, source } = core.extractIsbn({
     url: location.href,
     text: jimotoPageText(site),

@@ -540,6 +540,31 @@ test('popup のタブ表示が CSS と JS の対になっている', () => {
   );
 });
 
+test('タブで開いた注文リストが復帰時にカートを読み直す', () => {
+  // タブモードの popup.html は長寿命で、開いたまま Amazon 側で「カートに入れる」が
+  // 走る。読み直す契機が無いと、注文メールは rows（＝この画面の DOM）から組まれる
+  // ので**あとから追加した本が黙って落ちる**（さらに「リストを空にする」は
+  // 画面に一度も出ていない本まで消す）。DOM が要るので Node では再現できない。
+  // 形だけ固定する: 復帰側で storage を読み直し、その結果で描き直していること
+  const source = readCode('src/adapters/extension/popup.js');
+  const handler = source.match(
+    /addEventListener\(\s*'visibilitychange'\s*,\s*async\s*\(\)\s*=>\s*\{([\s\S]*?)\n\s*\}\)/,
+  );
+  assert.ok(handler, 'popup.js: visibilitychange でタブへの復帰を拾っていない');
+  // 離脱側（hidden）でも走ると、入力中の冊数欄が作り直される
+  assert.match(handler[1], /document\.hidden/, 'popup.js: 離脱側で早期 return していない');
+  assert.match(
+    handler[1],
+    /=\s*await loadCart\(\)/,
+    'popup.js: 復帰時に storage を読み直していない（init の 1 回きりに戻っている）',
+  );
+  assert.match(
+    handler[1],
+    /renderCart\(\)/,
+    'popup.js: 読み直した結果で rows を作り直していない（メールは rows から組まれる）',
+  );
+});
+
 test('package.json と manifest.json の version が一致する', () => {
   const packageVersion = JSON.parse(read('package.json')).version;
   const manifestVersion = JSON.parse(read('src/adapters/extension/manifest.json')).version;

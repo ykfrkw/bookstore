@@ -36,6 +36,7 @@
       "js": [
         "content-sites.js",
         "content-ui.js",
+        "content-bg.js",
         "content-mail.js",
         "content-panel.js",
         "content.js"

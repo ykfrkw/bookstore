@@ -192,6 +192,20 @@ async function init() {
 
   renderCart();
   syncVisibility();
+
+  // タブモードは長寿命なので、戻ってきた時点で storage を読み直す。開いたまま
+  // Amazon 側で「カートに入れる」を押すと、この画面は追加を知る契機を持たず、
+  // 注文メールは rows（＝この画面の DOM）から組まれるため**追加した本が黙って
+  // 落ちる**。popup モードは開くたびに新しい文書なので不要。
+  // storage.onChanged にしないのは、自分の書き込み（冊数の change）でも再描画が
+  // 走り、入力中の欄が作り直されるため。
+  if (inTab) {
+    document.addEventListener('visibilitychange', async () => {
+      if (document.hidden) return;
+      cart = await loadCart();
+      renderCart();
+    });
+  }
 }
 
 $('dest').addEventListener('change', syncVisibility);
@@ -227,9 +241,9 @@ $('mail').addEventListener('click', async () => {
   // 待ってから開く（await を後ろに回すと書き込み前に文脈ごと消える）
   if (plan.mode === 'copy') await navigator.clipboard.writeText(plan.copyText);
   chrome.tabs.create({ url: target.url });
-  // タブモードでは開いたあともこのページが残る。予告（#mail-hint）は
-  // 「これから何が起きるか」の文言なので、残るなら現在の状態で出し直す
-  if (inTab) renderMailHint();
+  // 送出では #mail-hint が読む状態（rows / profile / セレクト）が何も変わらないので、
+  // ここで出し直さない（必ず直前と同じ文字列になる）。タブモードで残ったページの
+  // 予告を更新する契機は、冊数の change・宛先の change・復帰時の renderCart の 3 つ
 });
 
 $('copy').addEventListener('click', async () => {

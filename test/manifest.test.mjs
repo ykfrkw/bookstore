@@ -124,7 +124,11 @@ test('chrome.action.openPopup をどこでも呼んでいない', () => {
   //
   // コメントを落としてから見るので、罠の説明は API 名を書いて構わない
   // （名前ごと禁じると、一番読まれる場所から grep 可能な固有名詞が消える）
-  for (const path of [...contentScriptFiles, 'background.js']) {
+  //
+  // 読み先は「どこでも」の名に合わせて拡張ページまで含める。popup / options では
+  // chrome.action が実在するぶん呼び出しが通ってしまい、注文リストを開く導線が
+  // タブ（tabs.create）と popup の 2 通りに割れる
+  for (const path of [...contentScriptFiles, 'background.js', 'popup.js', 'options.js']) {
     assert.doesNotMatch(
       readExtensionCode(path),
       /openPopup\s*(\?\.)?\s*\(/,
@@ -161,11 +165,14 @@ test('content script のどのファイルも openOptionsPage を呼ばない', 
   // 名前ごと禁じると罠の説明が婉曲表現になり、一番読まれる場所から grep 可能な
   // 固有名詞が消えるので、呼び出し形 `openOptionsPage(` / `openOptionsPage?.(`
   // だけを禁じる。
-  // content script は 5 ファイルに分かれているので、content.js だけを見ると
-  // 別ファイルに書かれた呼び出しを見逃す。宣言されている全ファイルを回す
+  // content script は 6 ファイルに分かれているので、content.js だけを見ると
+  // 別ファイルに書かれた呼び出しを見逃す。宣言されている全ファイルを回す。
+  // 読むのはコード（readExtensionCode）。上の openPopup 側と流儀を揃える——
+  // 片方だけコメント込みで見ると、ソースに「この語を書くな」という制約が
+  // 染み出す（→ test/helpers/source.mjs）
   for (const path of contentScriptFiles) {
     assert.doesNotMatch(
-      readExtensionFile(path),
+      readExtensionCode(path),
       /openOptionsPage\s*(\?\.)?\s*\(/,
       `${path}: content script では openOptionsPage は undefined`,
     );
@@ -190,10 +197,11 @@ test('content script と background.js のメッセージ型が双方向で一�
   const inContent = messageTypesIn(contentScriptCode());
 
   // 正規表現が何も拾わないと以下のループは空回りして vacuously green になる。
-  // 現在の型は 2 つ（設定・注文リスト）。接頭ごと変えたときにここで落とす
+  // 見たいのは「1 つも拾えない」ことだけなので件数では縛らない。`>= 2` にすると、
+  // 型が 1 つに戻った日に落ちて「接頭を変えたのでは」と原因と違うことを言う
   assert.ok(
-    inBackground.length >= 2,
-    `background.js からメッセージ型を拾えない（接頭 jimoto: を変えた?）: ${inBackground}`,
+    inBackground.length > 0,
+    'background.js からメッセージ型を 1 つも拾えない（接頭 jimoto: を変えた?）',
   );
 
   for (const type of inBackground) {
@@ -208,6 +216,55 @@ test('content script と background.js のメッセージ型が双方向で一�
       `content script が送る型 ${type} の handler が background.js に無い（送信側だけ改名した?）`,
     );
   }
+});
+
+test('jimotoRequestBackground に渡す型が JIMOTO_BACKGROUND_REQUESTS に登録されている', () => {
+  // 双方向テストはこれを通す。`messageTypesIn` は呼び出し引数のリテラルも拾うので、
+  // background.js と呼び出し側に型があれば、失敗文言の表（この定数）が欠けたままでも
+  // green になる。実機では未登録の型を渡した瞬間に何も出ない
+  // （jimotoRequestBackground の既定値つき分割代入が最後の砦。それを外すと同期 throw で
+  // トーストが 1 枚も出ず、この関数が防いでいるはずの症状に戻る）
+  const code = contentScriptCode();
+  // 表の参照そのものにも既定値を要求する。上の対応づけが守るのは「今あるコードが
+  // 揃っていること」だけで、未登録の型を渡した瞬間の挙動は守れない。素の分割代入に
+  // 戻すと TypeError が onclick で同期に throw し、トーストが 1 枚も出なくなる
+  assert.match(
+    code,
+    /JIMOTO_BACKGROUND_REQUESTS\[type\]\s*\?\?/,
+    'jimotoRequestBackground: 未登録の型で throw する（JIMOTO_BACKGROUND_REQUESTS[type] に既定値が無い）',
+  );
+  const table = code.match(/JIMOTO_BACKGROUND_REQUESTS\s*=\s*\{([\s\S]*?)\n\};/);
+  assert.ok(table, 'JIMOTO_BACKGROUND_REQUESTS の定義を読み取れない');
+  const registered = messageTypesIn(table[1]);
+  assert.ok(registered.length > 0, 'JIMOTO_BACKGROUND_REQUESTS からキーを 1 つも拾えない');
+
+  // 接頭で縛らずに拾う。型を打ち間違えた呼び出しも「登録されていない型」として落とす
+  const requested = [
+    ...new Set([...code.matchAll(/jimotoRequestBackground\(\s*'([^']+)'/g)].map(([, type]) => type)),
+  ];
+  assert.ok(requested.length > 0, 'jimotoRequestBackground の呼び出しを 1 つも拾えない');
+  for (const type of requested) {
+    assert.ok(
+      registered.includes(type),
+      `jimotoRequestBackground('${type}') の文言が JIMOTO_BACKGROUND_REQUESTS に無い`,
+    );
+  }
+});
+
+test('content.js は storage.onChanged の listener をトップレベルで同期登録する', () => {
+  // パネルの点数はカートの変化に追随する必要がある（popup / カートタブで削除
+  // されても、同じ URL に留まる限り buildPanel は走り直さない）。登録を
+  // buildPanel の中に入れると SPA 遷移のたびに listener が溜まり、古いパネルの
+  // 分まで動く。background.js の 4 listener と同じく行頭一致で固定する
+  const content = readExtensionCode('content.js');
+  assert.match(content, /^chrome\.storage\.onChanged\.addListener\(/m);
+  // キーは core から。リテラルで持つと storage.js と 2 箇所になり、
+  // 片方だけ直した時点で点数が黙って止まる（background.js と同じ話）
+  assert.match(content, /core\.CART_KEY/);
+  assert.ok(
+    !content.includes("'bookstore.cart'"),
+    "content.js に 'bookstore.cart' を直書きしない（core/storage.js の CART_KEY を使う）",
+  );
 });
 
 test('content_scripts.js が期待した順序で宣言されている', () => {
@@ -226,6 +283,9 @@ test('content_scripts.js が期待した順序で宣言されている', () => {
   assert.deepEqual(manifest.content_scripts[0].js, [
     'content-sites.js',
     'content-ui.js',
+    // 代理実行は jimotoToast を使うので content-ui.js より後、
+    // 依頼を出す content-mail.js / content.js より前
+    'content-bg.js',
     'content-mail.js',
     'content-panel.js',
     'content.js',
