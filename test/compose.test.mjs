@@ -307,6 +307,66 @@ test('簡略版は著者・出版社・罫線・■ を落とす', () => {
   assert.ok(!compact.body.includes('合計'));
 });
 
+/** 価格が入っている 2 冊目。合計行の検査で 1 冊目（¥3,850）と足し合わせる */
+const secondBook = {
+  book: {
+    isbn13: '9784260042116',
+    title: 'テスト書名 第2巻',
+    price: 2200,
+  },
+  quantity: 2,
+};
+
+/** 価格不明の 1 冊。openBD にも Amazon にも価格が無い新刊で普通に起きる */
+const pricelessBook = {
+  book: { isbn13: '9784758109123', title: 'テスト書名 第3巻', price: null },
+  quantity: 1,
+};
+
+/** 簡略版の合計行（`計 …` で始まる行）だけを取り出す。無ければ undefined */
+const compactTotalOf = (items) =>
+  composeOrder({ ...coopArgs, items, compact: true })
+    .body.split('\n')
+    .find((line) => line.startsWith('計 '));
+
+test('簡略版は 2 点以上のときだけ合計行を出す', () => {
+  // 簡略版が使われるのは 1〜3 点。ここを落とすと「2〜3 点の注文にだけ合計が
+  // 無い」状態になり、受け取った側も出した側も金額を数え直すことになる
+  assert.equal(compactTotalOf([...oneBook, secondBook]), '計 2点 3冊 概算 ¥8,250');
+  assert.equal(
+    compactTotalOf([...oneBook, secondBook, pricelessBook]),
+    '計 3点 4冊 概算 ¥8,250（価格不明 1点を除く）'
+  );
+  // 1 点では出さない。書名行に価格が出ているので同じ数字の繰り返しになる
+  assert.equal(compactTotalOf(oneBook), undefined);
+});
+
+test('簡略版の合計行は価格不明の点数を必ず書く', () => {
+  // 分かる分だけ足した額を黙って出すと、その額で予算が足りると読まれる。
+  // 誤発注は研究費の執行事故になるので、不明があることを本文に残す
+  const partial = compactTotalOf([...oneBook, pricelessBook]);
+  assert.match(partial, /価格不明 1点を除く/);
+  assert.match(partial, /概算 ¥3,850/);
+  // 全点が不明なら金額を出さず、不明の点数だけを残す（「を除く」も付けない）
+  const none = compactTotalOf([pricelessBook, { ...pricelessBook, quantity: 2 }]);
+  assert.equal(none, '計 2点 3冊（価格不明 2点）');
+});
+
+test('合計行を足しても 2 点の簡略版は mailto に収まる', () => {
+  // 合計行は encoded で 180 字前後を食う。簡略版が収まらなくなると、
+  // 2 点の注文が黙ってコピー経路（貼り付けが要る）に落ちる
+  const compact = composeOrder({
+    ...coopArgs,
+    items: [...oneBook, secondBook],
+    compact: true,
+  });
+  assert.equal(compact.tooLongForMailto, false);
+  assert.ok(
+    compact.encodedLength < MAILTO_SAFE_LENGTH,
+    `2 点の簡略版が ${compact.encodedLength} 字で収まらない`
+  );
+});
+
 test('簡略版でも組合員番号・会員番号は落とさない（非空なら入る）', () => {
   // 既定は空の任意項目。埋まっているのは「自分の生協・書店がこの番号を求める」
   // という利用者の明示的な入力なので、簡略版で黙って落とすと注文が通らなくなる

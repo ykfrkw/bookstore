@@ -5,17 +5,13 @@
  * (1) Gmail の URL を 1 回だけエンコードする（二重エンコードは本文に
  *     %E3%81%82 が並ぶ形で出るが、実機で開くまで気づけない）
  * (2) mailto を組み直さない（pickMailPlan の 3 段階の判定を二重実装しない）
- * (3) 退路を出す条件が 1 通りだけであること（利用者が「既定のメーラー」を
- *     選んでいるのに退路を出すと、選択を毎回否定して押し返すことになる）
+ * (3) **常に新しいタブで開く**こと。false に戻ると、mailto の web ハンドラ
+ *     （Gmail 等）を登録している利用者では現在のタブが遷移し、見ていた
+ *     書籍ページが消える（実機で指摘された症状そのもの）
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  MAIL_LEAVE_TIMEOUT_MS,
-  buildGmailCompose,
-  looksUnopened,
-  resolveMailTarget,
-} from '../src/core/mailopen.js';
+import { buildGmailCompose, resolveMailTarget } from '../src/core/mailopen.js';
 
 /** pickMailPlan の戻りを模した最小の plan。draft は composeOrder の出力の形 */
 const planOf = (mode, { body = '本文の1行目\n本文の2行目' } = {}) => ({
@@ -87,7 +83,7 @@ test('opener を省略すると auto と同じ（mailto をそのまま開く）
   assert.deepEqual(resolveMailTarget({ plan }), {
     url: plan.open,
     via: 'mailto',
-    newTab: false,
+    newTab: true,
   });
 });
 
@@ -116,68 +112,36 @@ test('gmail × コピー経路は body を載せない', () => {
   assert.equal(plan.copyText, plan.draft.body);
 });
 
-test('newTab が偽になるのは auto のときだけ', () => {
-  const plan = planOf('compact');
-  // auto は推定をする＝ target を付けられない。自分が作った新タブでも
-  // visibility が変わるので、付けると mailto の不発を「開けた」と誤判定する
-  assert.equal(resolveMailTarget({ plan, opener: 'auto' }).newTab, false);
-  assert.equal(resolveMailTarget({ plan }).newTab, false);
-  // Gmail はページ遷移なので、今のタブを潰さないよう必ず新しいタブ
-  assert.equal(resolveMailTarget({ plan, opener: 'gmail' }).newTab, true);
-  // keepPage はローカル版（手編集した本文が画面にある面）が渡す
-  assert.equal(resolveMailTarget({ plan, opener: 'auto', keepPage: true }).newTab, true);
-  assert.equal(resolveMailTarget({ plan, opener: 'gmail', keepPage: true }).newTab, true);
-});
-
-test("opener を 'mailto' に固定した場合は新しいタブで開く", () => {
-  // 固定モードでは推定をしない（looksUnopened が真になるのは auto のときだけ）。
-  // 推定しないなら target なしを守る理由が無く、現在のタブを犠牲にする必要も無い。
-  // web ハンドラ（Gmail 等）を登録している利用者は、固定にすれば書籍ページが残る
-  const plan = planOf('compact');
-  for (const mode of ['full', 'compact', 'copy']) {
-    const target = resolveMailTarget({ plan: planOf(mode), opener: 'mailto' });
-    assert.equal(target.newTab, true, mode);
-  }
-  // 既存の不変条件を壊していないこと: URL は plan.open の一字も変えない
-  const target = resolveMailTarget({ plan, opener: 'mailto' });
-  assert.equal(target.url, plan.open);
-  assert.equal(target.via, 'mailto');
-  // 推定は二重に無効化されるだけ（opener でも newTab でも偽）。挙動は変わらない
-  assert.equal(
-    looksUnopened({ opener: 'mailto', via: target.via, newTab: target.newTab, leftPage: false }),
-    false,
-  );
-});
-
-test('looksUnopened が真になるのは 1 通りだけ', () => {
-  const truthy = { opener: 'auto', via: 'mailto', newTab: false, leftPage: false };
-  assert.equal(looksUnopened(truthy), true);
-
-  // 1 つずつ崩すと必ず偽になる（＝真の条件が 1 通りであることの確認）
-  assert.equal(looksUnopened({ ...truthy, opener: 'mailto' }), false);
-  assert.equal(looksUnopened({ ...truthy, opener: 'gmail' }), false);
-  assert.equal(looksUnopened({ ...truthy, via: 'gmail' }), false);
-  assert.equal(looksUnopened({ ...truthy, newTab: true }), false);
-  assert.equal(looksUnopened({ ...truthy, leftPage: true }), false);
-});
-
-test("opener が 'mailto' のときは退路を出さない", () => {
-  // 「既定のメーラーで開く」は利用者の意図的な選択。メーラーが無い環境でも、
-  // ここで退路を出すとその選択を毎回否定して押し返すことになる。
-  // 上のテストと重なるが、これは仕様そのものなので単独で残す
-  for (const leftPage of [true, false]) {
-    for (const newTab of [true, false]) {
-      assert.equal(
-        looksUnopened({ opener: 'mailto', via: 'mailto', newTab, leftPage }),
-        false,
-        `leftPage=${leftPage} newTab=${newTab}`,
-      );
+test('newTab は常に true（どの opener・どの経路でも新しいタブ）', () => {
+  // false に戻ると、`mailto:` に web ハンドラ（Gmail 等）を登録している利用者で
+  // 現在のタブが遷移し、見ていた書籍ページが消える。**これが実機での指摘。**
+  // 以前は opener === 'auto' だけ false にして「開けたか」を推定していたが、
+  // 新タブにすると推定は必ず外れる（自分が作ったタブでも visibility は変わる）ので
+  // 推定ごと捨てた。退路は常設リンクとして残してある
+  for (const opener of ['auto', 'mailto', 'gmail', undefined]) {
+    for (const mode of ['full', 'compact', 'copy']) {
+      const target = resolveMailTarget({ plan: planOf(mode), opener });
+      assert.equal(target.newTab, true, `${opener} / ${mode}`);
     }
   }
 });
 
-test('待ち時間は 1.2 秒', () => {
-  // 短すぎると「開いたのに退路が出る」、長すぎると「無反応のまま黙って待つ」。
-  // 値そのものより、UI 側が独自の秒数を持たないことが要点
-  assert.equal(MAIL_LEAVE_TIMEOUT_MS, 1200);
+test('新タブにしても plan.open と Gmail の契約は変わらない', () => {
+  // newTab を触ったついでに URL の組み立てまで動かしていないことを見る。
+  // mailto を UI 側で組み直すと pickMailPlan の 3 段階が二重実装になる
+  for (const mode of ['full', 'compact', 'copy']) {
+    const plan = planOf(mode);
+    const target = resolveMailTarget({ plan, opener: 'mailto' });
+    assert.equal(target.url, plan.open, mode);
+    assert.equal(target.via, 'mailto', mode);
+  }
+});
+
+test('捨てた推定の道具が core に残っていない', async () => {
+  // looksUnopened / MAIL_LEAVE_TIMEOUT_MS は「新タブなら必ず外れる」推定の
+  // ためだけにあった。export が残っていると、UI 側が呼び戻して
+  // 「常に開けたと判定して退路を消す」死んだ分岐が静かに復活する
+  const mailopen = await import('../src/core/mailopen.js');
+  assert.equal(mailopen.looksUnopened, undefined, 'looksUnopened を戻さない');
+  assert.equal(mailopen.MAIL_LEAVE_TIMEOUT_MS, undefined, '1.2 秒の推測値を戻さない');
 });

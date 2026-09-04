@@ -40,9 +40,10 @@ src/core/                環境非依存のロジック。ここに副作用と 
   isbn.js                ISBN の検証・変換・ページからの抽出（純関数）
   bibliography.js        openBD 照会とフォールバック合成
   profile.js             設定スキーマ・既定値・バリデーション
-  compose.js             注文メールの組み立て（本体）
+  compose.js             注文メールの組み立て（並べ方と pickMailPlan）
+  mail-body.js           本文の部品（明細行・ヘッダ・合計行）。フル版と簡略版を対で持つ
   cart.js                冊数の下限（clampQty）とバッジ文字列（純関数）
-  mailopen.js            どの URL をどう開くか（Gmail / mailto の切り替えと推定）
+  mailopen.js            どの URL をどう開くか（Gmail / mailto の切り替え）
   storage.js             chrome.storage / localStorage の抽象化
 src/adapters/extension/  Chrome 拡張（MV3）
   content-sites.js       JIMOTO_SITES（サイト別セレクタ）・jimotoPageText
@@ -178,7 +179,7 @@ service worker を実際に import し、その import 先が生成物なので�
 
 - **mailto の長さ制限。** 日本語 1 文字がパーセントエンコードで 9 文字になるため、
   **フル版**の注文メールは 1 冊でも 2000 文字制限を超える。ただし挨拶・結び・罫線・
-  著者・出版社・合計行を削った簡略版（`composeOrder({ compact: true })`）なら収まる。
+  著者・出版社を削った簡略版（`composeOrder({ compact: true })`）なら収まる。
   UI は `compose.js` の `pickMailPlan` を通して 3 段階で選ぶこと。
   (1) フル版が収まる → 本文入り `mailto`、
   (2) 簡略版が収まる → 簡略版の本文入り `mailto`（貼り付け不要。簡略版で開いたことを
@@ -190,6 +191,10 @@ service worker を実際に import し、その import 先が生成物なので�
   `test/extension-source.test.mjs` がソース文字列で固定している）。
   簡略版でも**利用者が入力した項目は落とさない**（組合員番号・会員番号）。
   簡略版は書名と ISBN を必ず残す（ISBN の 1 桁違いに人が気づける唯一の手がかり）。
+  **簡略版でも 2 点以上なら合計行を出す**（1 点では書名行と重複するので出さない）。
+  価格不明の点数を必ず添えること（黙って少ない額を出すと誤発注の元になる）。
+  合計行は encoded で 67 字（不明の注記付きで 159 字）食うので、書名が長い
+  3 点はコピー経路に落ちうる。フル版には元から合計があるので合計は消えない。
   利用者が書いた `message` / `item.note` があるときは `composeOrder` が
   `compact` を無視してフル版に戻す。ここを UI 側の判定に移さない。
 - **`mailto:` は「渡す先が無いと無反応」。長さの問題ではない。**
@@ -197,26 +202,28 @@ service worker を実際に import し、その import 先が生成物なので�
   どちらも無いと**エラーも出さずに何も起きない**（2026-09-04 に実機で確定した
   「Gmail が立ち上がらない」の原因は、Gmail が `mailto` のハンドラとして
   登録されていなかったこと）。**登録状況は API から照会できない**ので、
-  推定（`looksUnopened`）と退路（Gmail 直リンク）以外に手が無い。
+  退路（Gmail 直リンク）以外に手が無い。
   `MAILTO_SAFE_LENGTH` を触ってこれを直そうとしないこと（上の 3 段階の話とは
   別問題。二重エンコードの膨張率は 1.63 倍で、どの経路も上限に届かない）。
   開き方の分岐は `src/core/mailopen.js` に閉じ、3 面はどれも
   `resolveMailTarget` を通す（Gmail の URL を面に直書きしない）。
-- **`auto` のパネルの `mailto` は `target` なしの `<a>` で開く。**
-  `target="_blank"` を足すと、自分が作った新しいタブで visibility が変わるため、
-  mailto が不発でも「開けた」と誤判定して退路が出なくなる。**テストは green の
-  まま症状だけが戻る**ので、知らずに足す事故が起きやすい。新しいタブで開く面
-  （popup・ローカル版）は同じ理由で推定を持てない（→ SPEC「メールの開き方」）。
-  逆に **`mailto` 固定は推定をしないので新しいタブで開く**（`resolveMailTarget`
-  が `newTab: true` を返す）。target なしは推定のための制約であって、それ自体が
-  目的ではない。`newTab` を読むのはパネルだけ（他 2 面は構造的に常に新タブ）。
+- **メールは 3 面とも新しいタブで開く**（`resolveMailTarget` の `newTab` は常に
+  `true`、パネルの anchor は常に `target="_blank" rel="noopener"`）。
+  target を落とすと、`mailto:` に web ハンドラ（Gmail 等）を登録している利用者で
+  現在のタブが遷移し、見ていた書籍ページが消える（**実機での指摘そのもの**）。
+  **「開けたか」の推定は 2026-09-05 に捨てた。** 新しいタブにすると自分が作った
+  タブでも visibility が変わるため推定は必ず外れ、しかも**テストは green の
+  まま退路だけが出なくなる**。両立しないので推定を捨て、退路を常設リンクに
+  した（→ SPEC「決定: 推定を捨てて新しいタブに倒す」）。
+  `waitForLeave` / `looksUnopened` / `MAIL_LEAVE_TIMEOUT_MS` を書き戻さないこと
+  （不在をテストが固定している）。
   anchor は `document.body` ではなく **closed shadow root に挿して即座に外す**
   （href に氏名・所属・科研費の課題番号が乗るため）。`window.open` にも
   戻さない（空白タブが残り、コピー経路では activation を失いうる）。
-  推定が外れても設定は書き換えない。`setMailOpener` を呼ぶのは退路の
-  クリックハンドラ 1 箇所だけ（出現回数をテストが固定している）。
-  **退路は前のクリックの plan を持ち回さず、`buildPlan()` で組み直す。**
-  退路は 1.2 秒後に出て閉じるまで残るので、間に財源や冊数が変わりうる。
+  設定を書き換える根拠は利用者のクリックだけ。`setMailOpener` を呼ぶのは
+  常設リンクのクリックハンドラ 1 箇所だけ（出現回数をテストが固定している）。
+  **常設リンクは前のクリックの plan を持ち回さず、`buildPlan()` で組み直す。**
+  常設なので前のクリックからいくらでも間が空き、その間に財源も冊数も変わる。
   古い plan を開き直すと旧課題番号の下書きが飛ぶ（前提 1 の事故そのもの）。
 - **ASIN ≠ ISBN。** 和書はだいたい一致するが、Kindle 版・洋書・ISBN-13 のみの
   新刊では一致しない。必ず `isValidIsbn10` を通す。
