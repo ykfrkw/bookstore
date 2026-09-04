@@ -29,13 +29,17 @@ const CONTENT_SCRIPT_SOURCES = readdirSync(EXTENSION_DIR)
   .sort()
   .map((name) => `src/adapters/extension/${name}`);
 
-/** innerHTML を書く可能性のあるアダプタのファイル。core は DOM を触らない */
+/**
+ * innerHTML を書く可能性のあるアダプタのファイル。core は DOM を触らない。
+ *
+ * content script 側は列挙せず CONTENT_SCRIPT_SOURCES から広げる。手で並べると、
+ * 次に content-*.js を足した人が追記を忘れた時点で、そのファイルだけ
+ * innerHTML 補間の検査が静かに素通りする（追記漏れ自体を落とすテストは無い）。
+ * ディスクから拾っておけば新しい content script が自動で対象に入る。
+ * 拡張ページとローカル版は命名規約が無いのでここに書き足す。
+ */
 const DOM_WRITING_SOURCES = [
-  'src/adapters/extension/content.js',
-  'src/adapters/extension/content-sites.js',
-  'src/adapters/extension/content-ui.js',
-  'src/adapters/extension/content-mail.js',
-  'src/adapters/extension/content-panel.js',
+  ...CONTENT_SCRIPT_SOURCES,
   'src/adapters/extension/options.js',
   'src/adapters/extension/popup.js',
   'src/adapters/local/app.js',
@@ -78,6 +82,86 @@ test('innerHTML に変数を補間しているアダプタが無い', () => {
       assert.ok(
         !rightHandSide.includes('${'),
         `${path}: innerHTML に変数を補間している -> ${rightHandSide.slice(0, 60)}`,
+      );
+    }
+  }
+});
+
+/**
+ * ファイル間の契約（提供側の `return { … }` と消費側の分割代入）。
+ *
+ * content script は import 文を持たない classic script なので、提供側の return から
+ * キーを 1 つ落としても、消費側は undefined を受け取るだけでテストは全件 green の
+ * まま通る。実機では buildPanel 内で TypeError（syncVisibility is not a function /
+ * rows is not iterable）や addToCart(undefined) になるが、run() の throw は
+ * tick() の .catch に吸われるため、**利用者から見た症状は「パネルが静かに出ない」
+ * だけ**になる（SPEC と content-ui.js が名指ししている最悪の壊れ方）。
+ *
+ * Node からは import できないので、既存の流儀どおりソース文字列で突き合わせる。
+ * 契約が増えたらこの配列に 1 行足す。
+ */
+const CROSS_FILE_CONTRACTS = [
+  {
+    path: 'src/adapters/extension/content-panel.js',
+    factory: 'jimotoBuildOrderForm',
+    consumer: 'src/adapters/extension/content.js',
+    keys: ['rows', 'getArgs', 'syncVisibility'],
+  },
+  {
+    path: 'src/adapters/extension/content-mail.js',
+    factory: 'jimotoMakeMailActions',
+    consumer: 'src/adapters/extension/content.js',
+    keys: ['openMail', 'copyBody', 'copyRemarks'],
+  },
+];
+
+/**
+ * `return {` の右辺を波括弧の対応で切り出し、ソース中の全ブロックを返す。
+ * 文字列やコメント中の括弧は数えてしまうが、対象は数行のオブジェクトリテラルで
+ * あり、そこに裸の波括弧は現れない。
+ */
+const returnedObjectLiterals = (source) => {
+  const blocks = [];
+  for (const match of source.matchAll(/return\s*\{/g)) {
+    const start = match.index + match[0].length - 1;
+    let depth = 0;
+    let cursor = start;
+    for (; cursor < source.length; cursor += 1) {
+      if (source[cursor] === '{') depth += 1;
+      else if (source[cursor] === '}' && --depth === 0) break;
+    }
+    blocks.push(source.slice(start, cursor + 1));
+  }
+  return blocks;
+};
+
+const hasKey = (text, key) => new RegExp(`\\b${key}\\b`).test(text);
+
+test('ファイル間の契約が提供側の return と消費側の分割代入で揃っている', () => {
+  for (const { path, factory, consumer, keys } of CROSS_FILE_CONTRACTS) {
+    // 提供側: キーが最も揃っている return ブロックを契約とみなす。
+    // 「どれか 1 つでも欠けた」を、欠けたキー名つきで落とす
+    const blocks = returnedObjectLiterals(read(path));
+    const [provided = []] = blocks
+      .map((block) => keys.filter((key) => hasKey(block, key)))
+      .sort((a, b) => b.length - a.length);
+    for (const key of keys) {
+      assert.ok(
+        provided.includes(key),
+        `${path}: ${factory} の return { … } に ${key} が無い。消費側は undefined を ` +
+          '受け取り、例外は run().catch に飲まれてパネルが静かに出なくなる',
+      );
+    }
+
+    // 消費側: 受け取り忘れも同じ症状になるので、分割代入の中身まで見る
+    const destructuring = read(consumer).match(
+      new RegExp(`\\{([^{}]*)\\}\\s*=\\s*${factory}\\b`),
+    );
+    assert.ok(destructuring, `${consumer}: ${factory} の戻りを分割代入していない`);
+    for (const key of keys) {
+      assert.ok(
+        hasKey(destructuring[1], key),
+        `${consumer}: ${factory} から ${key} を受け取っていない`,
       );
     }
   }

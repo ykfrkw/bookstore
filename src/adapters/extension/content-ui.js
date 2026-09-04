@@ -17,6 +17,16 @@ const JIMOTO_PANEL_CSS_PATH = 'content.css';
 
 const jimotoUrl = (p) => chrome.runtime.getURL(p);
 
+/**
+ * 要素を 1 つ作る。`class` / `text` は property に、`on*` は addEventListener に、
+ * 残りは setAttribute に振り分ける。
+ *
+ * **`on*` を渡した呼び出しは、この関数の中でその場でリスナを登録する。**
+ * つまり呼び出しの順序を動かすと、その要素のリスナ登録の順序も動く
+ * （返り値がまだ DOM に挿さっていなくても登録は済んでいる。「detached だから
+ * 無害」という一般化は成り立たない）。継ぎ目を動かすリファクタで生成順が
+ * 変わるときは、動かす呼び出しが `on*` を渡していないかを必ず確認すること。
+ */
 function jimotoEl(tag, attrs = {}, children = []) {
   const n = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {

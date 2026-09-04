@@ -37,13 +37,13 @@ function clampQty(v) {
  *   - syncVisibility: 宛先種別と支払区分に応じた行の出し入れ
  */
 function jimotoBuildOrderForm(core, profile, book) {
-  const d = profile.defaults;
+  const defaults = profile.defaults;
 
   const state = {
-    destinationId: d.destinationId || profile.destinations[0]?.id || '',
-    fundingMode: d.fundingMode,
-    fundingSourceId: d.fundingSourceId || profile.fundingSources[0]?.id || '',
-    quantity: d.quantity || 1,
+    destinationId: defaults.destinationId || profile.destinations[0]?.id || '',
+    fundingMode: defaults.fundingMode,
+    fundingSourceId: defaults.fundingSourceId || profile.fundingSources[0]?.id || '',
+    quantity: defaults.quantity || 1,
   };
 
   // option のラベルはユーザー設定由来の文字列なので text で入れる（innerHTML 補間はしない）
