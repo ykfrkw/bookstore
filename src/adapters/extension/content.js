@@ -25,15 +25,16 @@ const PANEL_ID = 'jimoto-panel';
  * （test/extension-source.test.mjs が src/core/ の実体と突き合わせている）。
  */
 async function loadCore() {
-  const [isbnMod, biblio, profileMod, compose, storage, mailopen] = await Promise.all([
+  const [isbnMod, biblio, profileMod, compose, storage, mailopen, cart] = await Promise.all([
     import(jimotoUrl('core/isbn.js')),
     import(jimotoUrl('core/bibliography.js')),
     import(jimotoUrl('core/profile.js')),
     import(jimotoUrl('core/compose.js')),
     import(jimotoUrl('core/storage.js')),
     import(jimotoUrl('core/mailopen.js')),
+    import(jimotoUrl('core/cart.js')),
   ]);
-  return { ...isbnMod, ...biblio, ...profileMod, ...compose, ...storage, ...mailopen };
+  return { ...isbnMod, ...biblio, ...profileMod, ...compose, ...storage, ...mailopen, ...cart };
 }
 
 /**

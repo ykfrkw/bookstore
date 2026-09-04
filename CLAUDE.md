@@ -41,6 +41,7 @@ src/core/                環境非依存のロジック。ここに副作用と 
   bibliography.js        openBD 照会とフォールバック合成
   profile.js             設定スキーマ・既定値・バリデーション
   compose.js             注文メールの組み立て（本体）
+  cart.js                冊数の下限（clampQty）とバッジ文字列（純関数）
   mailopen.js            どの URL をどう開くか（Gmail / mailto の切り替えと推定）
   storage.js             chrome.storage / localStorage の抽象化
 src/adapters/extension/  Chrome 拡張（MV3）
@@ -102,9 +103,10 @@ npm run build     # dist/bookstore-<version>.zip を作る
   ただし `content.js` は分割前からの裸のグローバルを既に持っている:
   **`PANEL_ID` / `loadCore` / `openOptions` / `buildPanel` /
   `mount` / `run` / `tick` / `lastHref`**（改名はしない。churn が大きく利益が
-  小さい）。**`clampQty` も同じ由来の裸のグローバルで、`content-panel.js` へ
-  移した**（唯一の消費者である冊数入力と同居させただけ。改名はしていない）。
-  全ファイルが同じ字句環境を共有するので、別ファイルでこの 9 個を
+  小さい）。**`clampQty` は同じ由来の裸のグローバルだったが `src/core/cart.js`
+  へ移した**（popup・ローカル版と 3 重複していたため）。content script からは
+  `loadCore()` 経由の `core.clampQty` で使う。
+  全ファイルが同じ字句環境を共有するので、別ファイルでこの 8 個を
   再宣言すると `SyntaxError: Identifier 'mount' has already been declared` で
   そのファイルの注入が丸ごと死ぬ。新しく書くときはこの一覧を避けること。
   分割を `chrome.runtime.getURL` + 動的 `import()` に変えないこと。分割した
@@ -121,6 +123,16 @@ npm run build     # dist/bookstore-<version>.zip を作る
 - **DOM セレクタは 1 箇所に集める。** `content-sites.js` の `JIMOTO_SITES` 以外に
   対応サイトのセレクタを散らさない。各サイトの DOM は予告なく変わる前提で、
   壊れたら該当サイトのエントリを直すだけで済む状態を保つ。
+- **カートに関わる純ロジックは `src/core/cart.js` に置く。** `clampQty`（冊数の
+  下限 1）とバッジ文字列は 3 面 + service worker が同じ答えを返す必要がある。
+  以前 `clampQty` は 3 面にコピーされており、片方だけ直せば `composeOrder` に
+  「0冊」の行が流れる形が残っていた。**面ごとに再定義しないこと**
+  （`test/extension-source.test.mjs` が定義の形を禁じている）。
+  冊数の保存は `storage.js` の `setCartQuantity` を通す。UI 側で
+  `cart[i].quantity` を書き換えるだけにすると保存されず、popup を閉じて
+  開き直したときに冊数が戻る（実際にそのバグだった）。
+  **バッジは冊数合計ではなく点数（`cart.length`）**。既存の唯一の数表示である
+  パネルのトースト「注文リストに追加（N点）」と同じ数でなければならない。
 - **文面は `profile.templates` 経由で差し替え可能にする。** 生協の決まり文句を
   コードに直書きしない。大学ごとに運用が違うため。
 - **日本語のコメントで良い。** 「なぜそうしたか」を書く。「何をしているか」は

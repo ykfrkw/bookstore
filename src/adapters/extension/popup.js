@@ -1,28 +1,47 @@
 import { withDefaults, validate, findDestination, destinationLabel } from './core/profile.js';
 import { composeOrder, pickMailPlan } from './core/compose.js';
 import { resolveMailTarget } from './core/mailopen.js';
-import { loadProfile, loadCart, removeFromCart, clearCart } from './core/storage.js';
+import { clampQty } from './core/cart.js';
+import {
+  loadProfile,
+  loadCart,
+  setCartQuantity,
+  removeFromCart,
+  clearCart,
+} from './core/storage.js';
 
 const $ = (id) => document.getElementById(id);
 let profile;
 let cart = [];
 
-// 冊数の下限は 1。非数値・0 以下が composeOrder に流れ込むのを防ぐ
-function clampQty(v) {
-  const n = Math.floor(Number(v));
-  return Number.isFinite(n) && n >= 1 ? n : 1;
-}
+/**
+ * 表示中の行と、その行の冊数入力欄。`renderCart` で作り直す。
+ *
+ * **注文メールが読む冊数はここ（DOM）が唯一の真。** 保存（`setCartQuantity`）は
+ * `change` で storage に書くが、その完了を待って `cart` を差し替えるだけでは
+ * 「打った直後にメールを押す」で古い冊数の本文が組まれる。冊数欄に 3 と打って
+ * そのままボタンを押すと、mousedown の blur で `change` が同期発火して
+ * `chrome.storage` の await で中断し、click ハンドラが先に走るため。
+ * `content-panel.js` の `item()` と同じ流儀（クリック時点の UI 状態から作る）に
+ * 揃えてある。ここを `cart` 読みに戻さないこと。
+ */
+const rows = [];
+
+/** composeOrder に渡す items。冊数はクリック時点の入力欄から読む */
+const draftItems = () =>
+  rows.map(({ item, qty }) => ({ ...item, quantity: clampQty(qty.value) }));
 
 function renderCart() {
   const list = $('list');
   list.textContent = '';
+  rows.length = 0;
   if (!cart.length) {
     // 静的な文言のみ（変数補間なし）なので innerHTML で問題ない
     list.innerHTML = '<div class="empty">書籍ページで「カートに入れる」を押すと<br />ここに溜まります</div>';
     renderMailHint();
     return;
   }
-  cart.forEach((item, i) => {
+  cart.forEach((item) => {
     // 書名は Amazon 由来の文字列なので textContent で入れる（innerHTML 補間はしない）
     const row = document.createElement('div');
     row.className = 'item';
@@ -40,13 +59,19 @@ function renderCart() {
     qty.min = '1';
     qty.inputMode = 'numeric';
     qty.value = String(item.quantity ?? 1);
-    qty.addEventListener('input', () => {
-      cart[i].quantity = clampQty(qty.value);
-    });
-    qty.addEventListener('change', () => {
-      qty.value = String(clampQty(qty.value));
-      // 冊数でも本文の長さは動くので、経路の予告を出し直す
+    // 保存は change（フォーカスが外れる / Enter）だけで行う。input ごとに
+    // 書くと 1 桁打つ間に chrome.storage への書き込みが並び、バッジを
+    // storage.onChanged から更新するときに無駄な発火が増える。
+    // メモリ上の配列だけ書き換えて保存しない形には戻さないこと（popup を
+    // 閉じて開き直すと冊数が戻る、という実バグだった）
+    qty.addEventListener('change', async () => {
+      const quantity = clampQty(qty.value);
+      qty.value = String(quantity);
+      // 予告は await の前に出し直す。保存を待つと、打鍵から storage の往復が
+      // 終わるまで古い経路表示が残る（本文を組むのは DOM なのでズレて見える）
       renderMailHint();
+      // 保存する値は storage、メールが読む値は DOM。出典を分けるのが要点
+      cart = await setCartQuantity(item.book.isbn13, quantity);
     });
 
     const del = document.createElement('button');
@@ -57,6 +82,7 @@ function renderCart() {
       renderCart();
     });
 
+    rows.push({ item, qty });
     row.append(t, qty, del);
     list.append(row);
   });
@@ -75,7 +101,7 @@ function syncVisibility() {
 function draft(compact = false) {
   return composeOrder({
     destinationId: $('dest').value,
-    items: cart,
+    items: draftItems(),
     profile,
     fundingMode: $('funding').value,
     fundingSourceId: $('source').value,
@@ -92,7 +118,7 @@ function draft(compact = false) {
 function renderMailHint() {
   const hint = $('mail-hint');
   // カートが空・設定未入力のときは経路を評価しても意味が無い（押しても止まる）
-  if (!cart.length || validate(profile, $('dest').value).length) {
+  if (!rows.length || validate(profile, $('dest').value).length) {
     hint.textContent = '';
     return;
   }
@@ -152,7 +178,7 @@ $('dest').addEventListener('change', syncVisibility);
 $('funding').addEventListener('change', syncVisibility);
 
 $('mail').addEventListener('click', async () => {
-  if (!cart.length) return;
+  if (!rows.length) return;
   const missing = validate(profile, $('dest').value);
   if (missing.length) {
     // 黙って設定画面へ飛ばすと何が起きたか分からないため、まず理由を見せてから開く
@@ -183,7 +209,7 @@ $('mail').addEventListener('click', async () => {
 });
 
 $('copy').addEventListener('click', async () => {
-  if (!cart.length) return;
+  if (!rows.length) return;
   const d = draft();
   await navigator.clipboard.writeText(d.plain);
   $('copy').textContent = 'コピー済み';

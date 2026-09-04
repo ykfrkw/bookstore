@@ -420,6 +420,123 @@ test('content.js の loadCore が core の全モジュールを読む', () => {
   }
 });
 
+/**
+ * `clampQty` を持つ 3 面と、それぞれが core から受け取る形。
+ *
+ * この 3 つには以前まったく同じ実装が（片方はコメントまで同じで）置かれていた。
+ * 冊数の下限がずれると composeOrder に「0冊」の行が入る＝誤発注につながるので、
+ * **定義は src/core/cart.js の 1 つだけ**にして、戻らないよう固定する。
+ * content-panel.js は import を持たない classic script なので loadCore() 経由の
+ * `core.clampQty` を、拡張ページとローカル版は core/cart.js からの import を使う。
+ */
+const CLAMP_QTY_CONSUMERS = [
+  {
+    path: 'src/adapters/extension/content-panel.js',
+    via: /\bcore\.clampQty\(/,
+    how: 'loadCore() の戻りから core.clampQty で受け取る',
+  },
+  {
+    path: 'src/adapters/extension/popup.js',
+    via: /import\s*\{[^}]*\bclampQty\b[^}]*\}\s*from\s*'\.\/core\/cart\.js'/,
+    how: "'./core/cart.js' から import する",
+  },
+  {
+    path: 'src/adapters/local/app.js',
+    via: /import\s*\{[^}]*\bclampQty\b[^}]*\}\s*from\s*'\.\.\/\.\.\/core\/cart\.js'/,
+    how: "'../../core/cart.js' から import する",
+  },
+];
+
+test('clampQty を再定義している面が無い', () => {
+  for (const { path, via, how } of CLAMP_QTY_CONSUMERS) {
+    const source = readCode(path);
+    // 定義の形（宣言・代入）を禁じる。import と core.clampQty はどちらも
+    // この形に当たらないので、正しい受け取り方だけが残る
+    assert.doesNotMatch(
+      source,
+      /(?:function|const|let|var)\s+clampQty\b/,
+      `${path}: clampQty を再定義している。定義は src/core/cart.js だけに置く`,
+    );
+    assert.doesNotMatch(
+      source,
+      /\bclampQty\s*=[^=]/,
+      `${path}: clampQty に代入している。定義は src/core/cart.js だけに置く`,
+    );
+    // 肯定側。禁止だけだと「clampQty を丸ごと消して素の Number() にした」
+    // （＝下限 1 が消えて 0 冊が通る）変更が green のまま通る
+    assert.match(source, via, `${path}: clampQty を ${how} 形になっていない`);
+  }
+});
+
+/**
+ * カートを書き換える面と、通すべき保存層の API。
+ *
+ * カートは `chrome.storage` に載る永続状態なので、面が手元の配列だけを
+ * 書き換えると popup を閉じて開き直した時点で変更が消える（PR8 で直した
+ * 実バグの形が `cart[i].quantity = …` だった）。`storage.js` 側には
+ * round-trip のテストがあるが、**面がその API を呼んでいるか**は Node から
+ * 確かめられない（popup.js / content.js は document・chrome.* 依存で
+ * import すら通らない）。MAIL_ADAPTERS / CLAMP_QTY_CONSUMERS と同じ流儀で
+ * ソース文字列を見る。
+ *
+ * `src/adapters/local/app.js` は対象外。あそこの `items` は永続化されない
+ * ページ内リストで、カートではない（直接書き換えるのが正しい）。
+ */
+const CART_WRITE_SURFACES = [
+  {
+    path: 'src/adapters/extension/popup.js',
+    calls: [/\bsetCartQuantity\(/, /\bremoveFromCart\(/, /\bclearCart\(/],
+  },
+  // content script は import を持たないので loadCore() の戻り経由で呼ぶ
+  { path: 'src/adapters/extension/content.js', calls: [/\bcore\.addToCart\(/] },
+];
+
+test('カートを書き換える面が保存層の API を通している', () => {
+  for (const { path, calls } of CART_WRITE_SURFACES) {
+    const source = readCode(path);
+    for (const call of calls) {
+      assert.match(source, call, `${path}: ${call.source} を呼んでいない`);
+    }
+  }
+});
+
+test('popup がカートの要素に直接代入していない', () => {
+  // 否定側が要る。肯定側だけだと「API を呼びつつメモリも直接書く」形が
+  // green のまま通り、保存された値と画面の値が食い違う。`.quantity =` は
+  // 実際にあったバグの形（main の popup.js にはこれが書かれている）
+  assert.doesNotMatch(
+    readCode('src/adapters/extension/popup.js'),
+    /\.quantity\s*=[^=]/,
+    'popup.js: カートの要素に直接代入している（保存されず、開き直すと戻る）',
+  );
+});
+
+test('popup の注文メールが冊数を DOM の入力欄から読む', () => {
+  const source = readCode('src/adapters/extension/popup.js');
+  // 保存の await の後ろでモジュール変数 `cart` を差し替える形だと、冊数を
+  // 打った直後にボタンを押したとき**古い冊数で本文が組まれる**。mousedown の
+  // blur で change が同期発火し、chrome.storage の await で中断したまま
+  // click ハンドラが先に走るため（レースではなく決定論的な順序）。
+  // DOM が要るので Node では再現できない。せめて形だけ固定する
+  assert.doesNotMatch(
+    source,
+    /items:\s*cart\b/,
+    'popup.js: composeOrder にモジュール変数 cart を渡している（打鍵直後の冊数が載らない）',
+  );
+  assert.match(
+    source,
+    /items:\s*draftItems\(\)/,
+    'popup.js: composeOrder の items が draftItems() 経由でない',
+  );
+  // 肯定側だけでは足りない。`draftItems = () => cart` にすると上の 2 つを
+  // 満たしたまま元の症状に戻るので、入力欄の value を読むことまで見る
+  assert.match(
+    source,
+    /const draftItems\s*=[^;]*qty\.value/,
+    'popup.js: draftItems が冊数入力欄の value を読んでいない',
+  );
+});
+
 test('package.json と manifest.json の version が一致する', () => {
   const packageVersion = JSON.parse(read('package.json')).version;
   const manifestVersion = JSON.parse(read('src/adapters/extension/manifest.json')).version;
