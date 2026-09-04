@@ -13,9 +13,32 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
+import { MAIL_OPENERS } from '../src/core/profile.js';
 
 const read = (relativePath) =>
   readFileSync(new URL(`../${relativePath}`, import.meta.url), 'utf8');
+
+/**
+ * コメントを落とす。**検査はコードに対して行う。**
+ *
+ * コメント込みで検査すると 2 つのことが起きる。(a) 守りたい形（`window.open(` や
+ * `location.href =`）を説明に書き写した時点でテスト自身に引っかかる。
+ * (b) 逆に「pickMailPlan を通している」等の肯定側は、コメントに名前が出るだけで
+ * 満たされてしまう。どちらもテストの意味を壊すので、除去してから検査する。
+ * ソース側に「この語を書くな」という制約を書き込むのは筋が悪い（前は
+ * content-mail.js と app.js のヘッダにその注意書きが入っていた）。
+ *
+ * `(^|[^:])` は `https://` の `//` を守るためのもの。行コメントの `//` の直前は
+ * 行頭か非コロン、URL の `//` の直前は必ず `:` になる。文字列リテラルの中に
+ * `:` を伴わない `//` を書くと落ちるが（正規表現リテラルも同様）、対象 9 ファイルに
+ * その形は無い。除去しすぎていないことは下の「除去後も検査対象が残る」で見る。
+ */
+const stripComments = (source) => source
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+/** 検査用に読む。コメントを落としたコードだけを返す */
+const readCode = (relativePath) => stripComments(read(relativePath));
 
 const EXTENSION_DIR = new URL('../src/adapters/extension/', import.meta.url);
 
@@ -56,7 +79,7 @@ test('注入パネルの shadow root は closed のまま', () => {
   // 'open' だと host.shadowRoot からページ側に読まれ、宛先ラベルと
   // 科研費の課題番号が露出する（SPEC「注入パネルは closed shadow DOM に閉じる」）
   assert.match(
-    read('src/adapters/extension/content.js'),
+    readCode('src/adapters/extension/content.js'),
     /attachShadow\(\s*\{\s*mode:\s*['"]closed['"]\s*\}\s*\)/,
     'content.js: パネルの attachShadow は mode: "closed" のまま置く',
   );
@@ -66,7 +89,7 @@ test('注入パネルの shadow root は closed のまま', () => {
   // 開かれても green のまま通り、露出が静かに戻る
   for (const path of CONTENT_SCRIPT_SOURCES) {
     assert.doesNotMatch(
-      read(path),
+      readCode(path),
       /attachShadow\(\s*\{\s*mode:\s*['"]open['"]/,
       `${path}: open shadow はホストページから shadowRoot 経由で読める`,
     );
@@ -75,7 +98,7 @@ test('注入パネルの shadow root は closed のまま', () => {
 
 test('innerHTML に変数を補間しているアダプタが無い', () => {
   for (const path of DOM_WRITING_SOURCES) {
-    const source = read(path);
+    const source = readCode(path);
     for (const [, rightHandSide] of source.matchAll(INNER_HTML_ASSIGNMENT)) {
       // 書誌・宛先ラベルはユーザー入力や外部サイト由来。補間すると XSS になる。
       // 値は textContent か property 経由（new Option / field.value）で入れる
@@ -111,7 +134,9 @@ const CROSS_FILE_CONTRACTS = [
     path: 'src/adapters/extension/content-mail.js',
     factory: 'jimotoMakeMailActions',
     consumer: 'src/adapters/extension/content.js',
-    keys: ['openMail', 'copyBody', 'copyRemarks'],
+    // fallback は退路の DOM。落とすと「メーラーが開かない環境で退路が出ない」
+    // ＝元の症状（押しても何も起きない）にそのまま戻る
+    keys: ['openMail', 'copyBody', 'copyRemarks', 'fallback'],
   },
 ];
 
@@ -141,7 +166,7 @@ test('ファイル間の契約が提供側の return と消費側の分割代入
   for (const { path, factory, consumer, keys } of CROSS_FILE_CONTRACTS) {
     // 提供側: キーが最も揃っている return ブロックを契約とみなす。
     // 「どれか 1 つでも欠けた」を、欠けたキー名つきで落とす
-    const blocks = returnedObjectLiterals(read(path));
+    const blocks = returnedObjectLiterals(readCode(path));
     const [provided = []] = blocks
       .map((block) => keys.filter((key) => hasKey(block, key)))
       .sort((a, b) => b.length - a.length);
@@ -154,7 +179,7 @@ test('ファイル間の契約が提供側の return と消費側の分割代入
     }
 
     // 消費側: 受け取り忘れも同じ症状になるので、分割代入の中身まで見る
-    const destructuring = read(consumer).match(
+    const destructuring = readCode(consumer).match(
       new RegExp(`\\{([^{}]*)\\}\\s*=\\s*${factory}\\b`),
     );
     assert.ok(destructuring, `${consumer}: ${factory} の戻りを分割代入していない`);
@@ -169,32 +194,71 @@ test('ファイル間の契約が提供側の return と消費側の分割代入
 
 /**
  * メール導線を持つ 3 面。どれも DOM / chrome API 依存で Node からは実行できない。
- * opener は「メーラーを開く」呼び出し。面ごとに手段が違う（拡張の content script は
- * window.open、popup は tabs.create、ローカル版は location.href）。
+ * opener は「メーラーを開く」呼び出し。面ごとに手段が違う。
+ *
+ * **opener は自前の関数名で書く。** 以前は `window.open(` / `location.href =` を
+ * 期待していたが、どちらも実機で害があって捨てた手段（前者は空白タブが残り、
+ * activation を失うと無言でブロックされる。後者は Gmail がハンドラのとき今の
+ * タブが置き換わり、ローカル版の手編集が消える）。ブラウザ API 名で固定すると
+ * 「捨てた手段に戻す」変更が緑のまま通ってしまう。
+ *
+ * **opener は呼び出しの形（行頭 ＋ 任意の `await`）で書く。** 関数名だけで
+ * 探すと定義（`function jimotoOpenMailUrl(…)`）も掴む。今は定義が最初の
+ * pickMailPlan より前にあるので偶然当たらないが、定義が呼び出しの間に移った
+ * 時点で「コピーが opener より前」が偽の失敗を出す（テストが実装の並び順に
+ * 依存してしまう）。行頭で縛れば定義は `function ` が前置されるので外れる。
  *
  * content 側が content-mail.js なのは、下の「コピーが opener より前」が
- * pickMailPlan( 以降を slice して index を比較する＝ pickMailPlan・
+ * pickMailPlan の呼び出し以降を slice して index を比較する＝ pickMailPlan・
  * clipboard.writeText・opener が同一ファイルにあることを前提にしているため。
  * 送出シーケンスを別ファイルへ散らすとこのテストは green のまま意味を失う。
  */
 const MAIL_ADAPTERS = [
-  { path: 'src/adapters/extension/content-mail.js', opener: /window\.open\(/ },
-  { path: 'src/adapters/extension/popup.js', opener: /chrome\.tabs\.create\(/ },
-  { path: 'src/adapters/local/app.js', opener: /location\.href\s*=/ },
+  {
+    path: 'src/adapters/extension/content-mail.js',
+    opener: /^\s*(?:await\s+)?jimotoOpenMailUrl\(/m,
+  },
+  { path: 'src/adapters/extension/popup.js', opener: /^\s*(?:await\s+)?chrome\.tabs\.create\(/m },
+  { path: 'src/adapters/local/app.js', opener: /^\s*(?:await\s+)?openMailUrl\(/m },
 ];
 
 test('メール導線の 3 面が pickMailPlan を通している', () => {
   for (const { path } of MAIL_ADAPTERS) {
-    const source = read(path);
+    const source = readCode(path);
     // 長さ判定と 3 段階の選択を UI 側に書き写すと、面ごとに挙動がずれる
     // （SPEC「注文導線 — 情報量の多い経路から順に選ぶ」）
     assert.match(source, /pickMailPlan\(/, `${path}: pickMailPlan を通していない`);
   }
 });
 
+test('メール導線の 3 面が resolveMailTarget を通している', () => {
+  for (const { path } of MAIL_ADAPTERS) {
+    // 「どの URL を開くか」は core の 1 箇所で決める。面ごとに mailto を
+    // 組み直すと pickMailPlan の 3 段階の判定が二重実装になり、Gmail の
+    // URL 組み立てが 3 つに増える（片方だけ直した時点で挙動がズレる）
+    assert.match(
+      readCode(path),
+      /resolveMailTarget\(/,
+      `${path}: resolveMailTarget を通していない`,
+    );
+  }
+});
+
+test('Gmail の URL を知っているのは core だけ', () => {
+  for (const { path } of MAIL_ADAPTERS) {
+    // 面に直書きすると view=cm / fs=1 / su= の組み立てが増殖する。
+    // とくに「コピー経路では body を載せない」の対称性は core にしかないので、
+    // 直書きした面だけ本文が黙って切られる
+    assert.ok(
+      !readCode(path).includes('mail.google.com'),
+      `${path}: Gmail の URL を直書きしている（core の buildGmailCompose を使う）`,
+    );
+  }
+});
+
 test('メール導線でクリップボード書き込みがメーラーを開く前にある', () => {
   for (const { path, opener } of MAIL_ADAPTERS) {
-    const source = read(path);
+    const source = readCode(path);
     // 判定より前のコピー（二次アクションの「全文をコピー」など）は対象外なので、
     // pickMailPlan 以降だけを見る
     const tail = source.slice(source.search(/pickMailPlan\(/));
@@ -202,11 +266,156 @@ test('メール導線でクリップボード書き込みがメーラーを開�
     const openAt = tail.search(opener);
     assert.ok(copyAt !== -1, `${path}: コピー経路の clipboard.writeText が無い`);
     assert.ok(openAt !== -1, `${path}: メーラーを開く呼び出しが無い`);
-    // window.open / tabs.create でフォーカスが移ると writeText が拒否されうる。
+    // anchor.click() / tabs.create でフォーカスが移ると writeText が拒否されうる。
     // 経路 3 を単純な「開くだけ」に潰すと本文が失われる（SPEC 6）
     assert.ok(
       copyAt < openAt,
       `${path}: メーラーを開いた後にコピーしている（フォーカスが移ると拒否されうる）`
+    );
+  }
+});
+
+test('捨てた開き方に戻っていない（window.open / location.href への代入）', () => {
+  // どちらも実機で症状を出した形。名指しで禁じておく。
+  // window.open: mailto を開くと空白タブが残り、コピー経路（writeText を
+  // await した後）では transient user activation を失って無言でブロックされうる
+  assert.doesNotMatch(
+    readCode('src/adapters/extension/content-mail.js'),
+    /window\.open\(/,
+    'content-mail.js: window.open に戻さない。anchor を作って click する',
+  );
+  // location.href への代入: Gmail が mailto のハンドラだと今のタブが Gmail に
+  // 置き換わり、ローカル版で手編集した本文と組み立てた下書きが消える
+  assert.doesNotMatch(
+    readCode('src/adapters/local/app.js'),
+    /location\.href\s*=/,
+    'app.js: location.href への代入に戻さない。新しいタブで開く',
+  );
+});
+
+test('下書きを載せた anchor を light DOM に出さない', () => {
+  const source = readCode('src/adapters/extension/content-mail.js');
+  // anchor の href には下書き（氏名・所属・科研費の課題番号）が乗る。
+  // ホストページの document に挿すと querySelectorAll('a[href^="mailto"]') で
+  // 読める。パネルを閉じた shadow root に隠した目的を丸ごと打ち消す。
+  //
+  // 挿し方のリテラル 1 つを禁じるだけでは足りない。肯定側（root への append）を
+  // 残したまま appendChild を 1 行足せば両方を満たせてしまい、下書き入りの
+  // anchor が light DOM に入る形が green のまま通る（実測）。このファイルが
+  // document を触る正当な理由は無い（挿し先は引数で受ける）ので、挿し先に
+  // なりうる 3 つのノードを名指しで禁じる
+  assert.doesNotMatch(
+    source,
+    /document\.(body|documentElement|head)/,
+    'content-mail.js: anchor を light DOM に挿している（href に下書きが乗る）',
+  );
+  // 肯定側も見る。否定だけだと「append をやめて innerHTML で挿す」等で素通りする
+  assert.match(
+    source,
+    /root\.append\(/,
+    'content-mail.js: anchor は閉じた shadow root に挿して即座に外す',
+  );
+});
+
+test('退路の「Gmail で開く」が押した瞬間のフォーム状態から組み直す', () => {
+  const source = readCode('src/adapters/extension/content-mail.js');
+  // 退路は 1.2 秒後に出て、閉じるか再マウントまで残る。その間に財源や冊数が
+  // 変わりうるので、前のクリックで組んだ plan を保持して開き直してはいけない。
+  // 利用者からは「同じ下書きを別の方法で開くボタン」に見えるため、旧課題番号の
+  // 下書きが飛んでも差分に気づく手掛かりが無い（誤発注は研究費の執行事故）
+  assert.doesNotMatch(
+    source,
+    /lastPlan/,
+    'content-mail.js: 直前の plan を保持している（退路が古い下書きを開く）',
+  );
+  // 肯定側。rememberGmailChoice の本体が buildPlan() を呼んでいること。
+  // クリックハンドラは const の連なりなので、次の const 宣言までを本体とみなす
+  const start = source.search(/const rememberGmailChoice\b/);
+  assert.ok(start !== -1, 'content-mail.js: rememberGmailChoice が無い');
+  const body = source.slice(start).split(/\n  const /)[0];
+  assert.match(
+    body,
+    /buildPlan\(/,
+    'content-mail.js: rememberGmailChoice が buildPlan() を呼び直していない',
+  );
+});
+
+/** #def-mail-opener の <select> を持つ面。3 値をベタ書きしている */
+const MAIL_OPENER_SELECTS = [
+  'src/adapters/extension/options.html',
+  'src/adapters/local/index.html',
+];
+
+test('メールの開き方の <option> が MAIL_OPENERS と一致する', () => {
+  for (const path of MAIL_OPENER_SELECTS) {
+    const html = read(path);
+    const start = html.search(/<select[^>]*id="def-mail-opener"/);
+    assert.ok(start !== -1, `${path}: #def-mail-opener の select が無い`);
+    const select = html.slice(start, html.indexOf('</select>', start));
+    const values = [...select.matchAll(/<option\s+value="([^"]*)"/g)].map(([, v]) => v);
+    // value="gmial" のような打ち間違いは保存され、読み出しで auto に丸まり、
+    // セレクトは「自動」を表示する。エラーは出ず「設定が保存できない」だけが
+    // 静かに残るので、HTML の 3 値と MAIL_OPENERS を突き合わせておく
+    assert.deepEqual(values, MAIL_OPENERS, `${path}: <option> の値が MAIL_OPENERS と違う`);
+  }
+});
+
+test('コメント除去が検査対象のコードまで消していない', () => {
+  // 除去が過剰だと、検査対象の行が消えて否定側のテストが偽の成功を返す。
+  // 各ファイルで「消えては困る 1 行」が残っていることを見ておく
+  const mustSurvive = [
+    ['src/adapters/extension/content-mail.js', /root\.append\(link\)/],
+    ['src/adapters/extension/content-mail.js', /clipboard\.writeText\(/],
+    ['src/adapters/extension/popup.js', /chrome\.tabs\.create\(/],
+    ['src/adapters/local/app.js', /document\.body\.append\(link\)/],
+    // 文字列の中の `//`（URL のスキーム区切り）を巻き添えにしない
+    ['src/core/bibliography.js', /'https:\/\/api\.openbd\.jp/],
+  ];
+  for (const [path, pattern] of mustSurvive) {
+    assert.match(readCode(path), pattern, `${path}: コメント除去が行き過ぎている`);
+  }
+  // 逆に、コメントは確実に落ちていること（落ちないと肯定側がコメントで満たせる）
+  assert.doesNotMatch(
+    readCode('src/adapters/extension/content-mail.js'),
+    /window\.open は使わない/,
+    'stripComments がブロックコメントを落としていない',
+  );
+});
+
+test('開き方の学習は退路のクリック 1 箇所だけが行う', () => {
+  const source = readCode('src/adapters/extension/content-mail.js');
+  // 推定（looksUnopened）は外れうる。ハンドラの登録状況は API から照会できず、
+  // 推定の材料は visibility の変化しかない。だから推定の結果で設定を
+  // 書き換えてはいけない（外れると mailto に戻す方法が設定画面しか無くなる）。
+  // 書き換えの根拠は利用者のクリックだけ ＝ 呼び出しは 1 箇所であるべき
+  const calls = source.match(/setMailOpener\(/g) || [];
+  assert.equal(
+    calls.length,
+    1,
+    'content-mail.js: setMailOpener の呼び出しが 1 箇所でない（推定で黙って ' +
+      '切り替えていないか確認する）',
+  );
+  assert.match(
+    source,
+    /rememberGmailChoice/,
+    'content-mail.js: 退路のクリックハンドラ（rememberGmailChoice）が無い',
+  );
+});
+
+test('content.js の loadCore が core の全モジュールを読む', () => {
+  // 足し忘れると core.xxx が undefined になり、呼んだ時点の TypeError が
+  // run().catch に飲まれて「パネルが静かに出ない」だけが残る。
+  // 読み先を src/core/ にするのは、拡張側の core/ が sync-core.mjs の生成物
+  // （git 管理外）で、同期前でもこのテストが意味を持つようにするため
+  const loadCore = readCode('src/adapters/extension/content.js');
+  const coreModules = readdirSync(new URL('../src/core/', import.meta.url))
+    .filter((name) => name.endsWith('.js'))
+    .sort();
+  assert.ok(coreModules.length > 0, 'src/core に .js が無い');
+  for (const name of coreModules) {
+    assert.ok(
+      loadCore.includes(`core/${name}`),
+      `content.js の loadCore() が core/${name} を import していない`,
     );
   }
 });

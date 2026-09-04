@@ -79,7 +79,19 @@
           <option value="private">私費</option>
         </select>
       </label>
+      <label>メールの開き方
+        <select id="def-mail-opener">
+          <option value="auto">自動（推奨）</option>
+          <option value="mailto">既定のメーラー</option>
+          <option value="gmail">Gmail</option>
+        </select>
+      </label>
     </div>
+    <p class="hint">
+      「自動」は既定のメーラーを先に試し、開けなかったときだけ Gmail の案内を出します。
+      Gmail を選ぶと、下書き（氏名・所属・財源を含む）が作成画面の URL として
+      Google に渡ります。既定のメーラーでは渡りません。
+    </p>
 
     <details>
       <summary>文面テンプレート（大学生協ごとの決まり文句を差し替える）</summary>

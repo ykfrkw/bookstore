@@ -17,6 +17,7 @@ const FIELDS = [
   ['req-phone', 'requester.phone'],
   ['req-delivery', 'requester.deliveryPlace'],
   ['def-funding', 'defaults.fundingMode'],
+  ['def-mail-opener', 'defaults.mailOpener'],
   ['tpl-coop-subject', 'templates.coopSubject'],
   ['tpl-coop-greeting', 'templates.coopGreeting'],
   ['tpl-coop-closing', 'templates.coopClosing'],

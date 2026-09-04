@@ -285,7 +285,7 @@ export function composeOrder({
  *   full: composeOrder の戻り値（フル版）。
  *   compact: 簡略版。使ってはいけない場面（本文を手編集した後など）は null を渡す。
  * @returns {{mode:'full'|'compact'|'copy', open:string, copyText:string, draft:object}}
- *   mode 'copy' のときだけ copyText を書き込む。open は必ず window.open / location へ。
+ *   mode 'copy' のときだけ copyText を書き込む。open の開き方は mailopen.js が決める。
  */
 export function pickMailPlan({ full, compact = null }) {
   if (!full.tooLongForMailto) {

@@ -112,6 +112,10 @@
     <div class="actions">
       <button class="primary" id="compose">注文メールを作る</button>
       <button id="mailto">メーラーで開く</button>
+      <!-- 常設。mailto のハンドラが登録されていない環境ではメーラーが開かず
+           無反応になるが、この面は新しいタブで開くため「開けたか」を推定できない。
+           推定の代わりに退路を最初から見せておく（→ core/mailopen.js） -->
+      <button id="gmail">Gmail で開く</button>
       <button id="copy">コピー</button>
       <button id="copy-remarks">備考欄の1行をコピー</button>
     </div>
@@ -152,7 +156,18 @@
             <option value="private">私費</option>
           </select>
         </label>
+        <label>メールの開き方
+          <select id="def-mail-opener">
+            <option value="auto">自動（推奨）</option>
+            <option value="mailto">既定のメーラー</option>
+            <option value="gmail">Gmail</option>
+          </select>
+        </label>
       </div>
+      <p class="hint">
+        「自動」は既定のメーラーを先に試します。Gmail を選ぶと下書き（氏名・所属・
+        財源を含む）が作成画面の URL として Google に渡ります。
+      </p>
 
       <div class="actions"><button class="primary" id="save">設定を保存</button><span id="saved"></span></div>
     </details>

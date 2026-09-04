@@ -118,6 +118,8 @@ async function save() {
     ? selectedDest
     : profile.destinations[0]?.id || '';
   profile.defaults.fundingMode = $('def-funding').value;
+  // 未知の値は withDefaults 側が 'auto' に丸めるので、ここでは素通しでよい
+  profile.defaults.mailOpener = $('def-mail-opener').value;
   if (!profile.fundingSources.some((s) => s.id === profile.defaults.fundingSourceId)) {
     profile.defaults.fundingSourceId = profile.fundingSources[0]?.id || '';
   }
@@ -142,6 +144,7 @@ export function initSettings(currentProfile, onSaved) {
   renderCards('fs-list', sources, sourceCard, () => {});
   renderDefaultDest(profile.defaults.destinationId);
   $('def-funding').value = profile.defaults.fundingMode;
+  $('def-mail-opener').value = profile.defaults.mailOpener;
 
   $('add-dest').addEventListener('click', () => {
     destinations.push(createDestination('coop'));

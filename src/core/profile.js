@@ -26,6 +26,17 @@ export const DESTINATION_KINDS = [
 const DEFAULT_RECEIVE_METHOD = { coop: '研究室へ配達', bookstore: '店頭受取' };
 
 /**
+ * メールの開き方。設定 UI のセレクトと mergeDefaults の丸めがここを唯一の
+ * 出典にする（→ mailopen.js）。
+ *
+ * - `auto`   まず `mailto:` を試し、開けなかったと推定できたときだけ Gmail の
+ *            退路を出す（既定。ハンドラ未登録の利用者を拾うため）
+ * - `mailto` 既定のメーラーに固定する。**退路は出さない**（意図的な選択なので）
+ * - `gmail`  Gmail の作成画面を新しいタブで開く
+ */
+export const MAIL_OPENERS = ['auto', 'mailto', 'gmail'];
+
+/**
  * 旧スキーマ（v0.2 まで）の coop.label / bookstore.label の既定値。
  * どちらも非空で、旧 options は withDefaults() の出力をそのまま保存していたため、
  * 「生協しか設定していない人の bookstore.label」も既定値のまま残っている。
@@ -57,6 +68,7 @@ export const DEFAULT_PROFILE = {
     fundingMode: 'research', // 'research' | 'private'
     fundingSourceId: '',
     quantity: 1,
+    mailOpener: 'auto', // MAIL_OPENERS のいずれか
   },
 
   /** 文面の差し替え。大学生協ごとの決まり文句をここで吸収する */
@@ -150,6 +162,10 @@ function migrateDestinations(saved) {
   return list;
 }
 
+/** メールの開き方を既知の値に丸める。既定は DEFAULT_PROFILE が唯一の出典 */
+const normalizeMailOpener = (value) =>
+  MAIL_OPENERS.includes(value) ? value : DEFAULT_PROFILE.defaults.mailOpener;
+
 /** 旧 defaults.route を destinationId に畳む。route 自体は保存し直さない */
 function mergeDefaults(savedDefaults) {
   const { route, ...rest } = savedDefaults || {};
@@ -157,6 +173,12 @@ function mergeDefaults(savedDefaults) {
     ...DEFAULT_PROFILE.defaults,
     ...rest,
     destinationId: rest.destinationId || route || '',
+    // 知らない値は既定に丸める。mailOpener は退路の表示条件そのもので、
+    // 未知の値が素通りすると looksUnopened が常に偽になり（'auto' でないため）
+    // 退路が二度と出ない＝「押しても何も起きない」に静かに戻る。
+    // 既定値をここに直書きしないのは、DEFAULT_PROFILE と二重定義になり、
+    // 片方だけ変えても全件 green のまま通ってしまうため
+    mailOpener: normalizeMailOpener(rest.mailOpener),
   };
 }
 
@@ -170,6 +192,24 @@ export function withDefaults(saved) {
     fundingSources: Array.isArray(p.fundingSources) ? p.fundingSources : [...d.fundingSources],
     defaults: mergeDefaults(p.defaults),
     templates: { ...d.templates, ...(p.templates || {}) },
+  };
+}
+
+/**
+ * メールの開き方を差し替えた新しいプロフィールを返す（純関数。元は変更しない）。
+ *
+ * 元を書き換えないのは、退路からの「次回から Gmail で開きます」が
+ * **保存に失敗しても画面の状態と食い違わない**ようにするため。
+ * 未知の値は mergeDefaults と同じ規則で 'auto' に丸める。
+ */
+export function setMailOpener(profile, value) {
+  const p = withDefaults(profile);
+  return {
+    ...p,
+    defaults: {
+      ...p.defaults,
+      mailOpener: normalizeMailOpener(value),
+    },
   };
 }
 

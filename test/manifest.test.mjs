@@ -173,6 +173,22 @@ test('background.js は onMessage listener をトップレベルで同期登録�
   assert.match(background, /^chrome\.runtime\.onMessage\.addListener\(/m);
 });
 
+test('退路の .jimoto-fallback が CSS と対になっている', () => {
+  // 退路は既定で display: none。表示側のクラスが CSS から消えると、
+  // JS は class を付け続けるのに何も出ない（＝メーラーが開かない利用者から見て、
+  // 直す前とまったく同じ「押しても何も起きない」に戻る）
+  const source = readExtensionFile('content-mail.js');
+  const style = readExtensionFile('content.css');
+  assert.match(source, /jimoto-fallback-shown/);
+  assert.match(style, /\.jimoto-fallback\s*\{/);
+  assert.match(style, /\.jimoto-fallback-shown\s*\{/);
+  // 赤はエラー専用。推定は外れうるので、退路を「壊れた」と読ませない
+  assert.ok(
+    !/\.jimoto-fallback[^{]*\{[^}]*--destructive/.test(style),
+    '.jimoto-fallback に --destructive を使わない（エラーではなく案内）',
+  );
+});
+
 test('content.js が使う .jimoto-actions-stack が content.css に定義されている', () => {
   // shadow DOM 越しの CSS/JS の結合は壊れても静かなので、文字列レベルで対にする。
   // 外れるとボタンが縦積みにならず、flex: 1 のまま文字高まで潰れる
