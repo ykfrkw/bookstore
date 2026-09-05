@@ -41,6 +41,9 @@ const JIMOTO_SITES = [
         document.querySelector('.a-price .a-offscreen')?.textContent ||
         document.querySelector('#price')?.textContent ||
         '';
+      // 拾えるのは数字だけで、税込表示か税抜表示かはサイト・時期で違う。
+      // ここで税区分を名乗らせない（mergeFallback が unknown のままにする）。
+      // 決め打つと「税抜を税込と称する」バグを作り直すことになる
       const price = Number(String(priceText).replace(/[^0-9]/g, '')) || null;
       return { title, author, price };
     },

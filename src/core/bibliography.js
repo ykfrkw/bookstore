@@ -11,7 +11,37 @@ import { toIsbn13 } from './isbn.js';
 
 const OPENBD_ENDPOINT = 'https://api.openbd.jp/v1/get';
 
-/** @typedef {{isbn13:string,title:string,author:string,publisher:string,pubdate:string,price:number|null,cover:string,source:string}} Book */
+/**
+ * 価格の税区分。値は `source`（'openbd' / 'page' / 'empty'）と同じ流儀に合わせ、
+ * 小文字の短い語にする。
+ *
+ * **`unknown` は「たぶん税込」ではなく「こちらでは判断できない」。**
+ * 表示側は unknown にラベルを付けない（→ mail-body.js）。分からないものに
+ * 「（税込）」と書けば、それは推測ではなく誤りとして相手に届く。
+ */
+export const TAX_BASIS = {
+  included: 'included',
+  excluded: 'excluded',
+  unknown: 'unknown',
+};
+
+/**
+ * ONIX の PriceType。**`'01'` が税抜（本体価格）、`'02'` が税込。**
+ * 日本の書籍は本体価格（税抜）で流通しているものが多いので、区別せずに
+ * `Price[0]` を拾うと税抜の数字を「税込」として注文メールに載せることになる。
+ * 研究費の執行では 10% の差が後から出る。
+ */
+const PRICE_TYPE_TAX_EXCLUDED = '01';
+const PRICE_TYPE_TAX_INCLUDED = '02';
+
+/** 前後の空白を許した、数字だけ（小数可）の文字列 */
+const DIGITS_ONLY = /^\s*\d+(\.\d+)?\s*$/;
+
+/**
+ * @typedef {{isbn13:string, title:string, author:string, publisher:string,
+ *            pubdate:string, price:number|null, taxBasis:string, cover:string,
+ *            source:string}} Book
+ */
 
 /** @returns {Book} */
 export function emptyBook(isbn13 = '') {
@@ -22,9 +52,61 @@ export function emptyBook(isbn13 = '') {
     publisher: '',
     pubdate: '',
     price: null,
+    taxBasis: TAX_BASIS.unknown,
     cover: '',
     source: 'empty',
   };
+}
+
+/**
+ * 金額として読める入力だけを数値にする。読めなければ `null`。
+ *
+ * `Number()` に通すだけだと空白文字列・真偽値・空配列が 0 や 1 になり、
+ * `定価: ¥0（税込）` や `定価: ¥1（税込）` が税区分の断言つきで本文に載る。
+ * 0 は `renderSummary` の `amount ?` にも falsy として効くので、明細行に
+ * 金額があるのに合計行が金額を出さない食い違いまで出る。数字そのものと
+ * 数字だけの文字列に限り、かつ正の値だけを採る。
+ */
+function toPriceAmount(rawAmount) {
+  if (typeof rawAmount === 'number') {
+    return Number.isFinite(rawAmount) && rawAmount > 0 ? rawAmount : null;
+  }
+  if (typeof rawAmount !== 'string' || !DIGITS_ONLY.test(rawAmount)) return null;
+  const amount = Number(rawAmount);
+  return amount > 0 ? amount : null;
+}
+
+/**
+ * ONIX の Price[] から採る 1 件を決める。
+ *
+ * 優先順は **税込（'02'）→ 税抜（'01'）→ 先頭**。税込が載っているなら
+ * それが利用者の払う額に一番近い。どちらの PriceType も無い版元データでは
+ * 従来どおり先頭を採るが、**税区分は unknown にして黙って断言しない**。
+ *
+ * 金額に読めない要素は飛ばす（→ toPriceAmount）。数値でない PriceAmount を
+ * 採ると price が NaN になり、合計金額まで NaN が伝染する。
+ *
+ * @param {Array<object>|undefined} prices
+ * @returns {{price:number|null, taxBasis:string}}
+ */
+function pickPrice(prices) {
+  const numeric = (Array.isArray(prices) ? prices : [])
+    .map((entry) => ({
+      amount: toPriceAmount(entry?.PriceAmount),
+      // ONIX のコードは 2 桁の文字列だが、JSON では数値 2 や '1' で入ることが
+      // ある。0 埋めした文字列に寄せてから比べる
+      priceType: entry?.PriceType == null ? '' : String(entry.PriceType).padStart(2, '0'),
+    }))
+    .filter((entry) => entry.amount != null);
+
+  const taxIncluded = numeric.find((entry) => entry.priceType === PRICE_TYPE_TAX_INCLUDED);
+  if (taxIncluded) return { price: taxIncluded.amount, taxBasis: TAX_BASIS.included };
+
+  const taxExcluded = numeric.find((entry) => entry.priceType === PRICE_TYPE_TAX_EXCLUDED);
+  if (taxExcluded) return { price: taxExcluded.amount, taxBasis: TAX_BASIS.excluded };
+
+  if (numeric.length) return { price: numeric[0].amount, taxBasis: TAX_BASIS.unknown };
+  return { price: null, taxBasis: TAX_BASIS.unknown };
 }
 
 /** openBD のレスポンス 1 件を Book に落とす */
@@ -33,9 +115,7 @@ export function parseOpenBd(entry, isbn13) {
   const s = entry.summary || {};
   const onix = entry.onix || {};
 
-  let price = null;
-  const p = onix?.ProductSupply?.SupplyDetail?.Price?.[0]?.PriceAmount;
-  if (p != null && !Number.isNaN(Number(p))) price = Number(p);
+  const { price, taxBasis } = pickPrice(onix?.ProductSupply?.SupplyDetail?.Price);
 
   return {
     isbn13: s.isbn ? String(s.isbn).replace(/-/g, '') : isbn13,
@@ -44,6 +124,7 @@ export function parseOpenBd(entry, isbn13) {
     publisher: s.publisher || '',
     pubdate: s.pubdate || '',
     price,
+    taxBasis,
     cover: s.cover || '',
     source: 'openbd',
   };
@@ -74,14 +155,28 @@ export async function fetchBook(isbn, opts = {}) {
   }
 }
 
-/** openBD で引けなかったときに、ページ由来の値で最低限埋める */
+/**
+ * openBD で引けなかったときに、ページ由来の値で最低限埋める。
+ *
+ * **ページから拾った価格の税区分は必ず unknown。** 対応サイトの価格表示に
+ * 税区分が併記されているとは限らず、税込表示のサイトと税抜表示のサイトが
+ * 混在する。セレクタで拾った数字だけからは決められない。ここで税込と
+ * 決め打つと、直したはずのバグ（税抜を税込と称する）をフォールバック経路に
+ * 作り直すことになる。
+ */
 export function mergeFallback(book, fallback = {}) {
   const base = book || emptyBook(fallback.isbn13 || '');
   const out = { ...base };
+  // 旧スキーマ（taxBasis を持たない時代に保存された Book）が流れ込んでも
+  // undefined を表示側へ渡さない
+  out.taxBasis = base.taxBasis || TAX_BASIS.unknown;
   for (const k of ['title', 'author', 'publisher', 'pubdate', 'cover']) {
     if (!out[k] && fallback[k]) out[k] = fallback[k];
   }
-  if (out.price == null && fallback.price != null) out.price = fallback.price;
+  if (out.price == null && fallback.price != null) {
+    out.price = fallback.price;
+    out.taxBasis = TAX_BASIS.unknown;
+  }
   if (base.source === 'empty' && fallback.title) out.source = 'page';
   return out;
 }
