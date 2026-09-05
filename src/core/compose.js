@@ -186,13 +186,16 @@ export function composeOrder({
     .filter(Boolean)
     .join('\n');
 
+  const compactTotal = renderCompactTotal(counts);
+
   const compactBody = [
     fill(isCoop ? p.templates.coopCompactGreeting : p.templates.bookstoreCompactGreeting, vars),
     '',
-    items.map(renderCompactItem).join('\n'),
+    // 合計行が出ないときだけ明細行に税区分を添える（出典が 1 箇所になるように）
+    items.map((item) => renderCompactItem(item, { withTaxLabel: !compactTotal })).join('\n'),
     // 合計行は 2 点以上のときだけ（1 点では書名行の価格と同じ数字が並ぶだけ）。
     // 空文字は keepBlankLines を通ってしまうので、ここで false に潰して落とす
-    renderCompactTotal(counts) || false,
+    compactTotal || false,
     '',
     renderCompactInfo(context),
     '',
