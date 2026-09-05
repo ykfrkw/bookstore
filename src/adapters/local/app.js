@@ -36,8 +36,9 @@ function showMessage(text, kind = 'error') {
  * 以前は `location.href = plan.open` としていた。Gmail が mailto のハンドラだと
  * 今のタブが Gmail に置き換わり、本文 textarea の手編集が消える。押下時点の
  * textarea から mailto を組み直す設計なので、編集が消えるのは機能の否定になる。
- * 代わりに新しいタブで開く以上「開けたか」は推定できない（自分が作ったタブでも
+ * 新しいタブで開く以上「開けたか」は推定できない（自分が作ったタブでも
  * visibility は変わる）ので、**この面は推定を置かず Gmail を常設にする**。
+ * 2026-09-05 に注入パネルもこの形に揃えた（→ SPEC「メールの開き方」）。
  * remove を finally に置くのは、この面の anchor が light DOM にあるため
  * （click が throw すると、href に下書きを載せた anchor がページに残る）。
  */
@@ -238,8 +239,8 @@ function currentDraft() {
 /**
  * 下書きをメーラー（または Gmail）で開く。
  *
- * @param {'auto'|'mailto'|'gmail'} opener この面は推定をしないので 'auto' と
- *   'mailto' の挙動は同じ（どちらも既定のメーラー）
+ * @param {'auto'|'mailto'|'gmail'} opener 'auto' と 'mailto' の挙動は同じ
+ *   （どちらも既定のメーラー。推定はどの面でもしない）
  *
  * 「メーラーで開く」と「Gmail で開く」で 1 つの経路を共有する。別々に書くと、
  * 手編集の尊重（edited）とコピーの順序という 2 つの配慮を片方だけ落としうる。
@@ -254,9 +255,9 @@ async function openWith(opener) {
   // 手編集が無ければ compose() と同じ入力から組み直す。textarea の本文を
   // full として渡すと、コピー経路のときに簡略版の本文をコピーしてしまう
   const plan = edited ? pickMailPlan({ full: d }) : planFrom(lastArgs);
-  // keepPage: true は「今のタブを潰さない」の意思表示。手編集した本文が
-  // 画面に残っている必要があるので、この面では必ず新しいタブで開く
-  const target = resolveMailTarget({ plan, opener, keepPage: true });
+  // resolveMailTarget は常に newTab: true を返す（3 面とも新しいタブ）。
+  // この面は手編集した本文が画面に残っている必要があるので、それが前提
+  const target = resolveMailTarget({ plan, opener });
   if (plan.mode === 'copy') {
     // フォーカスが移る前にコピーを済ませる。この順序を入れ替えない
     await navigator.clipboard.writeText(plan.copyText);
@@ -277,7 +278,7 @@ async function openWith(opener) {
 }
 
 $('mailto').addEventListener('click', () => openWith(profile.defaults.mailOpener));
-// Gmail は常設（推定ができない面なので、退路を最初から見せておく）
+// Gmail は常設（推定ができないので、退路を最初から見せておく。パネルも同じ形）
 $('gmail').addEventListener('click', () => openWith('gmail'));
 
 $('copy').addEventListener('click', async () => {

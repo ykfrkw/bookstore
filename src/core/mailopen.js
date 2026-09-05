@@ -11,22 +11,24 @@
  * いないと、Chrome は OS の既定メーラーへ投げ、それも無ければ**無反応**になる。
  * 押しても何も起きないので、利用者からは拡張の不具合と区別がつかない。
  * ハンドラの登録状況は API から照会できない（`registerProtocolHandler` は
- * 読めない）ため、**退路（Gmail の作成画面を直接開く）と推定**しか手が無い。
+ * 読めない）ため、手は**退路（Gmail の作成画面を直接開く）**しかない。
+ *
+ * **推定はやめた（2026-09-05）。** 以前は「ページを離れたか」を 1.2 秒待って
+ * 見張り、離れなければ退路を出していた。だが「新しいタブで開く」と両立しない:
+ * 自分が作った新タブでも visibility は変わるので、mailto が不発でも「開けた」に
+ * なる。実機で「同じタブが Gmail に置き換わって書籍ページが消える」と指摘され、
+ * 新タブを採る＝推定を捨てる、と決めた（→ SPEC「メールの開き方」）。
+ * 退路は推定の有無に関わらず**常設のリンク**として残るので、失うのは
+ * 「開けなかった人にだけ出す」という出し分けだけ。ハンドラが無い人には
+ * **空白タブが開く**という目に見える signal が出るので、以前の「何も起きない」
+ * より状況が読める。1.2 秒という推測値（OS のメーラーのコールドスタートが
+ * 3〜5 秒かかると誤検知した）も消える。
  *
  * 長さは原因ではない。Gmail をハンドラにすると `mailto:` 全体が `url=` へ
  * 再エンコードされるが、膨張率は 1.63 倍（`%` 1 文字 → 3 文字なので ×3 では
  * ない）で、簡略版の Gmail URL 全体でも 2,936 文字。Gmail の実効上限にも
  * ブラウザの上限にも届かない。**だから MAILTO_SAFE_LENGTH は変えない。**
  */
-
-/**
- * mailto を開いてからページを離れたかを見るまでの待ち時間（ミリ秒）。
- *
- * ハンドラが登録されていれば数十〜数百ミリ秒で visibility が変わる。
- * 短すぎると「開いたのに退路が出る」、長すぎると「無反応のまま黙って待つ」。
- * 1.2 秒は、遅い環境の取りこぼしと待たされ感の折り合い。
- */
-export const MAIL_LEAVE_TIMEOUT_MS = 1200;
 
 /**
  * Gmail の作成画面（compose）の URL を組む。
@@ -60,37 +62,34 @@ export function buildGmailCompose({ to, cc = '', subject = '', body = '' }) {
  * @param {{mode:'full'|'compact'|'copy', open:string, copyText:string, draft:object}} args.plan
  *   compose.js の pickMailPlan の戻り。**ここで作り直さない**
  * @param {'auto'|'mailto'|'gmail'} [args.opener] 利用者の設定（defaults.mailOpener）
- * @param {boolean} [args.keepPage] 今のページを残したいか（ローカル版は手編集した
- *   本文が画面にあるので必ず true。同じタブを Gmail に置き換えると編集が消える）
  * @returns {{url:string, via:'mailto'|'gmail', newTab:boolean}}
  *
  * `opener` が 'gmail' 以外のときは **plan.open をそのまま返す**。
  * mailto の URL を UI 側で組み直すと、3 段階（フル版 / 簡略版 / ヘッダのみ）の
  * 判定が pickMailPlan と二重実装になり、長さの判定が面ごとにズレる。
  *
- * **`newTab` を読むのはパネル（content-mail.js）だけ。** popup は
- * `chrome.tabs.create`、ローカル版は `target="_blank"` 固定で、どちらも構造的に
- * 常に新しいタブになるため、この値を見る必要が無い（＝見ていない）。
+ * **`newTab` は常に true。** 3 面とも新しいタブで開く。
+ * - パネル: `mailto:` に web ハンドラ（Gmail 等）が登録されていると、target なしの
+ *   anchor は**現在のタブ**を遷移させ、見ていた書籍ページが消える（実機での指摘）
+ * - ローカル版: 手編集した本文が画面にあるので、現在のタブを潰せない
+ * - popup: `chrome.tabs.create` なので構造的に常に新しいタブ
+ *
+ * 以前は `opener === 'auto'` だけ false にして「開けたか」を推定していたが、
+ * 新タブにすると推定が必ず外れる（自分が作ったタブでも visibility は変わる）ので
+ * 推定ごと捨てた。代わりに退路（Gmail）を常設にしてある。
+ * 代償: OS のメーラーを使っている利用者には `mailto:` ＋ target="_blank" の
+ * 既知の挙動で**空白タブが残りうる**。ハンドラが 1 つも無い利用者にとっては、
+ * その空白タブが「渡す先が無い」という唯一の目に見える signal でもある。
+ *
+ * **常に true なので、現在この値で分岐している呼び出し側は 1 つも無い**
+ * （3 面とも構造的に新しいタブで開くため）。それでも戻り値に残すのは、
+ * 「新しいタブで開く」が面の実装都合ではなく core が決めた契約だと示すため。
+ * `test/mailopen.test.mjs` が全 opener × 全経路で true を固定しているので、
+ * 誰かが一部の経路だけ同じタブに戻そうとすれば必ず落ちる。
  */
-export function resolveMailTarget({ plan, opener = 'auto', keepPage = false }) {
+export function resolveMailTarget({ plan, opener = 'auto' }) {
   if (opener !== 'gmail') {
-    return {
-      url: plan.open,
-      via: 'mailto',
-      // **推定をしない場面では現在のタブを犠牲にしない。**
-      // `auto` で target を付けないのは推定を成立させるためだけの制約
-      // （target="_blank" を付けると自分が作った新タブで visibility が変わり、
-      // mailto が不発でも「開けた」と誤判定して looksUnopened が死ぬ）。
-      // `mailto` に固定した時点で推定はしない（looksUnopened が真になるのは
-      // opener === 'auto' のときだけ）ので、制約を守る理由も無くなる。
-      // web ハンドラ（Gmail 等）を登録している利用者は、固定モードにすれば
-      // 見ていた書籍ページが現在のタブに残る。
-      //
-      // 代償: 固定モードで **OS のメーラー**を使っている利用者には、
-      // `mailto:` ＋ target="_blank" の既知の挙動で空白タブが残りうる。
-      // 固定は明示的な選択であり、既定の `auto`（target なし）は汚さない。
-      newTab: opener === 'mailto' || Boolean(keepPage),
-    };
+    return { url: plan.open, via: 'mailto', newTab: true };
   }
   const draft = plan.draft || {};
   return {
@@ -108,25 +107,4 @@ export function resolveMailTarget({ plan, opener = 'auto', keepPage = false }) {
     // Gmail はページ遷移なので、今のタブを潰さないよう必ず新しいタブで開く
     newTab: true,
   };
-}
-
-/**
- * mailto が不発だった可能性が高いかを推定する。
- *
- * 真になるのは **1 通りだけ**:
- *   opener === 'auto' && via === 'mailto' && !newTab && !leftPage
- *
- * - `opener === 'mailto'` は利用者が「既定のメーラーで開く」を意図的に選んだ
- *   状態。ここで退路を出すと、選択を毎回否定して押し返すことになる。
- *   **絶対に含めない**
- * - `newTab` が真なら判定不能。自分が作った新しいタブでも visibility は
- *   変わるので、mailto が不発でも「開けた」に見える
- *   （だからパネルの mailto は target なしの anchor で開く）
- * - `leftPage` が真なら実際にどこかへ渡っている
- *
- * 推定は外れうる（ハンドラの登録状況は照会できない）。外れたときのコストを
- * 「消せる案内 1 つ」に留めるため、**推定だけで設定を書き換えない**。
- */
-export function looksUnopened({ opener, via, newTab, leftPage }) {
-  return opener === 'auto' && via === 'mailto' && !newTab && !leftPage;
 }

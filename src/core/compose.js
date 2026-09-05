@@ -14,8 +14,17 @@
  *  - 複数冊をまとめて 1 通にできる。公費は検収の都合でまとめた方が実務的。
  */
 
-import { display as displayIsbn } from './isbn.js';
 import { withDefaults, findFundingSource, findDestination } from './profile.js';
+// 1 件・ヘッダ・合計行の書式は mail-body.js に置く。ここは並べ方だけを持つ
+import {
+  renderItem,
+  renderCompactItem,
+  renderHeader,
+  renderCompactInfo,
+  renderSummary,
+  renderCompactTotal,
+  tally,
+} from './mail-body.js';
 
 /** ブラウザ / OS のメーラー連携が安定して通る実測上の上限の目安 */
 export const MAILTO_SAFE_LENGTH = 2000;
@@ -56,10 +65,6 @@ function fill(tpl, vars) {
   return String(tpl).replace(/\{(\w+)\}/g, (_, k) => (vars[k] ?? ''));
 }
 
-function yen(n) {
-  return n == null ? '—' : '¥' + Number(n).toLocaleString('ja-JP');
-}
-
 /** 財源の表示ラベル。私費なら「私費」 */
 export function fundingLabel(profile, { fundingMode, fundingSourceId }) {
   if (fundingMode !== 'research') return '私費';
@@ -78,47 +83,6 @@ export function remarksLine(profile, order) {
     representative: src?.representative || p.requester.name || '',
     deliveryPlace: p.requester.deliveryPlace || '',
   });
-}
-
-function renderItem(item, index) {
-  const b = item.book || {};
-  const meta = [
-    b.author && `著者: ${b.author}`,
-    b.publisher && `出版社: ${b.publisher}`,
-    b.pubdate && `発行: ${b.pubdate}`,
-  ]
-    .filter(Boolean)
-    .join(' / ');
-
-  const lines = [
-    `${index + 1}. 『${b.title || '(書名未取得)'}』`,
-    meta && `   ${meta}`,
-    `   ISBN: ${displayIsbn(b.isbn13 || '')}`,
-    `   定価: ${yen(b.price)}（税込）`,
-    `   冊数: ${item.quantity ?? 1}`,
-    item.note && `   備考: ${item.note}`,
-  ];
-  return lines.filter(Boolean).join('\n');
-}
-
-/**
- * 簡略版の 1 件。ISBN 行と書名行の 2 行だけにする（著者・出版社・発行年は落とす）。
- * 書名は削らない。ISBN が 1 桁違ったときに人が気づける唯一の手がかりだから。
- */
-function renderCompactItem(item) {
-  const b = item.book || {};
-  const price = b.price == null ? '' : ` ${yen(b.price)}`;
-  return [
-    `ISBN ${displayIsbn(b.isbn13 || '')}`,
-    `『${b.title || '(書名未取得)'}』 ${item.quantity ?? 1}冊${price}`,
-  ].join('\n');
-}
-
-function totals(items) {
-  const count = items.reduce((a, i) => a + (i.quantity ?? 1), 0);
-  const known = items.filter((i) => i.book?.price != null);
-  const amount = known.reduce((a, i) => a + i.book.price * (i.quantity ?? 1), 0);
-  return { count, amount, partial: known.length !== items.length };
 }
 
 /**
@@ -149,7 +113,23 @@ export function composeOrder({
   const receiveMethod = dest?.receiveMethod || '';
   const storeName = dest?.storeName || '';
   const order = { fundingMode, fundingSourceId };
-  const { count, amount, partial } = totals(items);
+  const counts = tally(items);
+
+  /**
+   * 依頼者・宛先まわりの文脈。フル版のヘッダと簡略版の情報行が同じものを見る。
+   * ここで 1 度だけ解決しておくと、財源の引き当てが 2 箇所に散らない
+   * （散ると片方だけ直したときに「フル版と簡略版で予算代表者が違う」が起きる）。
+   */
+  const context = {
+    isCoop,
+    fundingMode,
+    requester: p.requester,
+    fundingLabel: fundingLabel(p, order),
+    representative: findFundingSource(p, fundingSourceId)?.representative || p.requester.name,
+    receiveMethod,
+    storeName,
+    memberNumber: dest?.memberNumber || '',
+  };
 
   const vars = {
     name: p.requester.name || '',
@@ -163,24 +143,7 @@ export function composeOrder({
     vars
   ).replace(/\s+/g, ' ').trim();
 
-  const header = [
-    isCoop && `■ 支払区分: ${fundingLabel(p, order)}`,
-    isCoop &&
-      fundingMode === 'research' &&
-      `■ 予算代表者: ${findFundingSource(p, fundingSourceId)?.representative || p.requester.name}`,
-    receiveMethod && `■ 受取方法: ${receiveMethod}`,
-    storeName && `■ 受取店舗: ${storeName}`,
-    p.requester.deliveryPlace && receiveMethod.includes('配達')
-      ? `■ 配達場所: ${p.requester.deliveryPlace}`
-      : '',
-    `■ 所属: ${p.requester.affiliation}`,
-    `■ 氏名: ${p.requester.name}${p.requester.kana ? `（${p.requester.kana}）` : ''}`,
-    // 呼び名だけ種別で出し分ける（生協は組合員番号、書店は会員番号）
-    dest?.memberNumber && `■ ${isCoop ? '組合員番号' : '会員番号'}: ${dest.memberNumber}`,
-    `■ 連絡先: ${[p.requester.email, p.requester.phone].filter(Boolean).join(' / ')}`,
-  ]
-    .filter(Boolean)
-    .join('\n');
+  const header = renderHeader(context);
 
   // 利用者が自分で書いた文章（ひとこと・備考）は簡略版では落ちる。それを黙って
   // 捨てるのは不可なので、compact を指定されていてもフル版に戻す。UI 側の判定に
@@ -191,9 +154,6 @@ export function composeOrder({
   const useCompact = compact && !hasFreeText;
 
   const rule = '-'.repeat(32);
-  const summary = `合計 ${items.length}点 / ${count}冊${
-    amount ? ` / 概算 ${yen(amount)}${partial ? '（価格不明の書籍を除く）' : ''}` : ''
-  }`;
 
   const keepBlankLines = (x) => x !== undefined && x !== null && x !== false;
 
@@ -206,7 +166,7 @@ export function composeOrder({
     items.map(renderItem).join(`\n${rule}\n`),
     rule,
     '',
-    summary,
+    renderSummary(counts),
     message && `\n${message}`,
     '',
     isCoop ? p.templates.coopClosing : p.templates.bookstoreClosing,
@@ -219,29 +179,6 @@ export function composeOrder({
     .join('\n')
     .replace(/\n{3,}/g, '\n\n');
 
-  // 受取店舗は独立行にせず受取方法に括弧で添える（行数を削るのが簡略版の目的）
-  const receiveLine = receiveMethod
-    ? `受取: ${receiveMethod}${storeName ? `（${storeName}）` : ''}`
-    : storeName
-      ? `受取: ${storeName}`
-      : '';
-
-  const compactInfo = [
-    isCoop && `支払: ${fundingLabel(p, order)}`,
-    isCoop &&
-      fundingMode === 'research' &&
-      `予算代表者: ${findFundingSource(p, fundingSourceId)?.representative || p.requester.name}`,
-    receiveLine,
-    p.requester.deliveryPlace && receiveMethod.includes('配達')
-      ? `配達: ${p.requester.deliveryPlace}`
-      : '',
-    // 既定は空の任意項目。非空なら「この番号を求められている」という利用者の
-    // 明示的な入力なので簡略版でも落とさない（呼び名の規則はフル版と同じ）
-    dest?.memberNumber && `${isCoop ? '組合員番号' : '会員番号'}: ${dest.memberNumber}`,
-  ]
-    .filter(Boolean)
-    .join('\n');
-
   const signature = [
     `${p.requester.name}${p.requester.affiliation ? `（${p.requester.affiliation}）` : ''}`,
     [p.requester.email, p.requester.phone].filter(Boolean).join(' / '),
@@ -253,8 +190,11 @@ export function composeOrder({
     fill(isCoop ? p.templates.coopCompactGreeting : p.templates.bookstoreCompactGreeting, vars),
     '',
     items.map(renderCompactItem).join('\n'),
+    // 合計行は 2 点以上のときだけ（1 点では書名行の価格と同じ数字が並ぶだけ）。
+    // 空文字は keepBlankLines を通ってしまうので、ここで false に潰して落とす
+    renderCompactTotal(counts) || false,
     '',
-    compactInfo,
+    renderCompactInfo(context),
     '',
     fill(isCoop ? p.templates.coopCompactClosing : p.templates.bookstoreCompactClosing, vars),
     '',

@@ -271,6 +271,69 @@ test('捨てた開き方に戻っていない（window.open / location.href へ�
   );
 });
 
+test('パネルの mailto を新しいタブで開く（target を落としていない）', () => {
+  const source = readCode('src/adapters/extension/content-mail.js');
+  // target を落とすと、`mailto:` に web ハンドラ（Gmail 等）を登録している
+  // 利用者で現在のタブが遷移し、見ていた書籍ページが消える（実機での指摘）。
+  // 以前は「開けたか」を推定するために target を付けられなかったが、推定は
+  // 捨てた（→ 下の「推定の残骸が content script に無い」）
+  assert.match(
+    source,
+    /target:\s*'_blank'/,
+    'content-mail.js: anchor に target="_blank" を付けていない（現在のタブが遷移する）',
+  );
+  assert.match(
+    source,
+    /rel:\s*'noopener'/,
+    'content-mail.js: rel="noopener" を落とさない',
+  );
+});
+
+test('推定の残骸が content script に無い', () => {
+  // 推定（ページを離れたかを 1.2 秒待つ）は新しいタブと両立しない。自分が
+  // 作ったタブでも visibility は変わるので必ず「開けた」に倒れる。
+  // 消し忘れると、退路を消す死んだ分岐がテスト green のまま復活する。
+  // content script 全ファイルに回すのは、待ちを別ファイルへ移して素通りさせないため
+  for (const path of CONTENT_SCRIPT_SOURCES) {
+    const source = readCode(path);
+    assert.doesNotMatch(
+      source,
+      /waitForLeave|looksUnopened|MAIL_LEAVE_TIMEOUT_MS/i,
+      `${path}: 捨てた推定（waitForLeave / looksUnopened）が残っている`,
+    );
+  }
+});
+
+test('パネルの Gmail 退路が常設リンクになっている', () => {
+  const source = readCode('src/adapters/extension/content-mail.js');
+  // 既定で見せる。ハンドラの登録状況は API から照会できず、新タブでは推定も
+  // 成立しないので、出し分けをやめて最初から置く。クラスを付けて「見せる」
+  // 形（jimoto-fallback-shown）に戻すと、押しても何も起きない利用者に何も出ない
+  assert.ok(
+    !source.includes('jimoto-fallback-shown'),
+    'content-mail.js: 退路は常設。表示クラスによる出し分けに戻さない',
+  );
+  // 隠すのは「既に gmail で開く設定」のときだけ
+  assert.match(
+    source,
+    /jimoto-fallback-hidden/,
+    'content-mail.js: gmail 設定済みのときに退路を隠す出し分けが無い',
+  );
+  const start = source.search(/const syncFallback\b/);
+  assert.ok(start !== -1, 'content-mail.js: syncFallback が無い');
+  assert.match(
+    source.slice(start).split(/\n  const /)[0],
+    /mailOpener === 'gmail'/,
+    'content-mail.js: 退路を隠す条件が「gmail に設定済み」でない',
+  );
+  // 常設リンクの実体（Gmail を開くボタン）。文言ではなくハンドラで固定する
+  assert.match(
+    source,
+    /text: 'Gmail で開く',\s*\n\s*onclick: rememberGmailChoice,/,
+    'content-mail.js: 「Gmail で開く」が rememberGmailChoice を呼んでいない',
+  );
+});
+
 test('下書きを載せた anchor を light DOM に出さない', () => {
   const source = readCode('src/adapters/extension/content-mail.js');
   // anchor の href には下書き（氏名・所属・科研費の課題番号）が乗る。

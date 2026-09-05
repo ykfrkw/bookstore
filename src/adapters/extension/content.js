@@ -25,16 +25,24 @@ const PANEL_ID = 'jimoto-panel';
  * （test/extension-source.test.mjs が src/core/ の実体と突き合わせている）。
  */
 async function loadCore() {
-  const [isbnMod, biblio, profileMod, compose, storage, mailopen, cart] = await Promise.all([
-    import(jimotoUrl('core/isbn.js')),
-    import(jimotoUrl('core/bibliography.js')),
-    import(jimotoUrl('core/profile.js')),
-    import(jimotoUrl('core/compose.js')),
-    import(jimotoUrl('core/storage.js')),
-    import(jimotoUrl('core/mailopen.js')),
-    import(jimotoUrl('core/cart.js')),
-  ]);
-  return { ...isbnMod, ...biblio, ...profileMod, ...compose, ...storage, ...mailopen, ...cart };
+  const [isbnMod, biblio, profileMod, compose, mailBody, storage, mailopen, cart] =
+    await Promise.all([
+      import(jimotoUrl('core/isbn.js')),
+      import(jimotoUrl('core/bibliography.js')),
+      import(jimotoUrl('core/profile.js')),
+      import(jimotoUrl('core/compose.js')),
+      // compose.js が内部で import するので必須ではないが、core を 1 つでも
+      // 落とすと呼んだ時点の TypeError が run().catch に飲まれて
+      // 「パネルが静かに出ない」だけが残る。全モジュールを列挙しておく
+      import(jimotoUrl('core/mail-body.js')),
+      import(jimotoUrl('core/storage.js')),
+      import(jimotoUrl('core/mailopen.js')),
+      import(jimotoUrl('core/cart.js')),
+    ]);
+  return {
+    ...isbnMod, ...biblio, ...profileMod, ...compose, ...mailBody,
+    ...storage, ...mailopen, ...cart,
+  };
 }
 
 /**
@@ -151,9 +159,9 @@ async function buildPanel(core, book) {
       jimotoEl('button', { class: 'jimoto-btn jimoto-ghost', text: '文面をコピー', onclick: copyBody }),
       jimotoEl('button', { class: 'jimoto-btn jimoto-ghost', text: '備考欄をコピー', onclick: copyRemarks }),
     ]),
-    // メーラーが開かなかったと推定できたときだけ出る退路（既定は非表示）。
-    // 実体は content-mail.js が持つ。ボタンの下に置くのは、押した直後に
-    // 目が行っている場所の続きに出したいため
+    // 「メーラーが開かない場合は Gmail で開く」の常設リンク。実体は
+    // content-mail.js が持つ。ボタンの下に置くのは、押して何も起きなかった
+    // 直後に目が行っている場所の続きに置きたいため
     fallback,
     // 二次導線はテキストリンクの 1 行にまとめる。ここをピルにすると
     // 主導線（縦積み 2 段）との強調差が消え、押してほしい順序が読めなくなる

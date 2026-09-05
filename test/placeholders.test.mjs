@@ -1,6 +1,7 @@
 /**
- * Purpose: 例示データ（placeholder・コメントの例）が 3 面で食い違わないこと、
- *          および実在の人名が公開対象のファイルに残っていないことを固定する。
+ * Purpose: 例示データ（placeholder・コメントの例）と利用者向けの説明文が
+ *          面ごとに食い違わないこと、および実在の人名が公開対象のファイルに
+ *          残っていないことを固定する。
  * Inputs:  src/core/profile.js, src/adapters/extension/options.html,
  *          src/adapters/local/index.html, src/**, test/**, scripts/**, docs/**, *.md
  * Outputs: node:test の結果のみ（ファイルは書かない）
@@ -70,6 +71,45 @@ test('ローカル版の placeholder が拡張版と同一文字列である', (
       placeholderOf(optionsHtml, 'id', optionsId),
       `${localField} の placeholder が options.html と違う`
     );
+  }
+});
+
+/**
+ * `id="def-mail-opener"` の直後に来る `<p class="hint">…</p>` の中身を、
+ * 空白（インデント・改行）を潰して返す。2 面で字下げの深さが違うだけで
+ * 落ちるのは意味が無いので、比較の前に正規化する
+ */
+function mailOpenerHintOf(html) {
+  const anchor = html.indexOf('id="def-mail-opener"');
+  assert.ok(anchor >= 0, 'def-mail-opener の select が見つからない');
+  const hint = html.slice(anchor).match(/<p class="hint">([\s\S]*?)<\/p>/);
+  assert.ok(hint, 'def-mail-opener の後ろに hint の段落が無い');
+  return hint[1].replace(/\s+/g, ' ').trim();
+}
+
+test('「メールの開き方」の説明が拡張版とローカル版で一致する', () => {
+  // 2026-09-05 に「開けたかの推定」を捨てたとき、README・CLAUDE.md・SPEC は
+  // 直したのに options.html の利用者向け文言だけが取り残された。ここを固定して
+  // おかないと、片面だけ直した状態が誰にも気づかれずに公開まで行く
+  assert.equal(mailOpenerHintOf(optionsHtml), mailOpenerHintOf(localHtml));
+});
+
+test('「メールの開き方」の説明が廃止した推定の挙動を書いていない', () => {
+  // 推定は廃止済みで、退路（「Gmail で開く」）は最初から常設。「開けなかった
+  // ときだけ案内を出す」と書いてあると、新規利用者が常設の案内を見て
+  // 「すでに失敗している」と読み、原因の無い不具合報告になる
+  const RETIRED = ['開けなかった', '先に試し', '先に試す'];
+  for (const html of [optionsHtml, localHtml]) {
+    const hint = mailOpenerHintOf(html);
+    for (const phrase of RETIRED) {
+      assert.ok(!hint.includes(phrase), `廃止した挙動の記述が残っている: ${phrase}`);
+    }
+  }
+  // 常設であることと、Gmail を選んだときだけ Google に渡ることは必ず書く
+  for (const html of [optionsHtml, localHtml]) {
+    const hint = mailOpenerHintOf(html);
+    assert.match(hint, /常に出/);
+    assert.match(hint, /Google に渡/);
   }
 });
 

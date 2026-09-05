@@ -1,5 +1,7 @@
 /**
- * Chrome ウェブストア提出用の zip を作る（依存なし・zip コマンドを使う）。
+ * Releases 配布用の zip を作る（依存なし・zip コマンドを使う）。
+ * ウェブストアには出さない（→ SPEC「未決事項」3. 配布形態の決定）。
+ * 利用者は zip を展開してデベロッパーモードで読み込む。
  *   node scripts/pack.mjs
  */
 import { execFileSync } from 'node:child_process';

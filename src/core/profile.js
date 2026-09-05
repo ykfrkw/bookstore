@@ -173,9 +173,9 @@ function mergeDefaults(savedDefaults) {
     ...DEFAULT_PROFILE.defaults,
     ...rest,
     destinationId: rest.destinationId || route || '',
-    // 知らない値は既定に丸める。mailOpener は退路の表示条件そのもので、
-    // 未知の値が素通りすると looksUnopened が常に偽になり（'auto' でないため）
-    // 退路が二度と出ない＝「押しても何も起きない」に静かに戻る。
+    // 知らない値は既定に丸める。mailOpener はメールの開き方そのもので、
+    // 未知の値が素通りすると resolveMailTarget が 'gmail' 以外として扱い、
+    // 設定で Gmail に固定したつもりが黙って既定のメーラーに戻る。
     // 既定値をここに直書きしないのは、DEFAULT_PROFILE と二重定義になり、
     // 片方だけ変えても全件 green のまま通ってしまうため
     mailOpener: normalizeMailOpener(rest.mailOpener),

@@ -379,15 +379,21 @@ test('バッジに --destructive の色を使わない', () => {
 });
 
 test('退路の .jimoto-fallback が CSS と対になっている', () => {
-  // 退路は既定で display: none。表示側のクラスが CSS から消えると、
-  // JS は class を付け続けるのに何も出ない（＝メーラーが開かない利用者から見て、
-  // 直す前とまったく同じ「押しても何も起きない」に戻る）
+  // 退路は常設。CSS 側が display: none に戻ると、JS はリンクを組み立て続けるのに
+  // 何も出ない（＝メーラーが開かない利用者から見て、直す前とまったく同じ
+  // 「押しても何も起きない」に戻る）。隠すのは gmail 設定済みのときだけで、
+  // その出し分けは -hidden クラスが担う
   const source = readExtensionFile('content-mail.js');
   const style = readExtensionFile('content.css');
-  assert.match(source, /jimoto-fallback-shown/);
-  assert.match(style, /\.jimoto-fallback\s*\{/);
-  assert.match(style, /\.jimoto-fallback-shown\s*\{/);
-  // 赤はエラー専用。推定は外れうるので、退路を「壊れた」と読ませない
+  assert.match(source, /jimoto-fallback-hidden/);
+  assert.match(style, /\.jimoto-fallback\s*\{[^}]*display:\s*block/);
+  assert.match(style, /\.jimoto-fallback-hidden\s*\{[^}]*display:\s*none/);
+  // 表示側のクラスは消えた。書き戻すと「既定は非表示」の形が静かに復活する
+  assert.ok(
+    !source.includes('jimoto-fallback-shown') && !style.includes('jimoto-fallback-shown'),
+    '退路は常設。jimoto-fallback-shown（出し分け）を戻さない',
+  );
+  // 赤はエラー専用。案内であって「壊れた」ではない
   assert.ok(
     !/\.jimoto-fallback[^{]*\{[^}]*--destructive/.test(style),
     '.jimoto-fallback に --destructive を使わない（エラーではなく案内）',
