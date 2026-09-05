@@ -34,6 +34,9 @@ export const TAX_BASIS = {
 const PRICE_TYPE_TAX_EXCLUDED = '01';
 const PRICE_TYPE_TAX_INCLUDED = '02';
 
+/** 前後の空白を許した、数字だけ（小数可）の文字列 */
+const DIGITS_ONLY = /^\s*\d+(\.\d+)?\s*$/;
+
 /**
  * @typedef {{isbn13:string, title:string, author:string, publisher:string,
  *            pubdate:string, price:number|null, taxBasis:string, cover:string,
@@ -56,14 +59,32 @@ export function emptyBook(isbn13 = '') {
 }
 
 /**
+ * 金額として読める入力だけを数値にする。読めなければ `null`。
+ *
+ * `Number()` に通すだけだと空白文字列・真偽値・空配列が 0 や 1 になり、
+ * `定価: ¥0（税込）` や `定価: ¥1（税込）` が税区分の断言つきで本文に載る。
+ * 0 は `renderSummary` の `amount ?` にも falsy として効くので、明細行に
+ * 金額があるのに合計行が金額を出さない食い違いまで出る。数字そのものと
+ * 数字だけの文字列に限り、かつ正の値だけを採る。
+ */
+function toPriceAmount(rawAmount) {
+  if (typeof rawAmount === 'number') {
+    return Number.isFinite(rawAmount) && rawAmount > 0 ? rawAmount : null;
+  }
+  if (typeof rawAmount !== 'string' || !DIGITS_ONLY.test(rawAmount)) return null;
+  const amount = Number(rawAmount);
+  return amount > 0 ? amount : null;
+}
+
+/**
  * ONIX の Price[] から採る 1 件を決める。
  *
  * 優先順は **税込（'02'）→ 税抜（'01'）→ 先頭**。税込が載っているなら
  * それが利用者の払う額に一番近い。どちらの PriceType も無い版元データでは
  * 従来どおり先頭を採るが、**税区分は unknown にして黙って断言しない**。
  *
- * 金額に読めない要素は飛ばす。数値でない PriceAmount を採ると price が NaN に
- * なり、合計金額まで NaN が伝染する（元コードの Number.isNaN 判定の意図）。
+ * 金額に読めない要素は飛ばす（→ toPriceAmount）。数値でない PriceAmount を
+ * 採ると price が NaN になり、合計金額まで NaN が伝染する。
  *
  * @param {Array<object>|undefined} prices
  * @returns {{price:number|null, taxBasis:string}}
@@ -71,16 +92,12 @@ export function emptyBook(isbn13 = '') {
 function pickPrice(prices) {
   const numeric = (Array.isArray(prices) ? prices : [])
     .map((entry) => ({
-      amount: Number(entry?.PriceAmount),
+      amount: toPriceAmount(entry?.PriceAmount),
       // ONIX のコードは 2 桁の文字列だが、JSON では数値 2 や '1' で入ることが
       // ある。0 埋めした文字列に寄せてから比べる
       priceType: entry?.PriceType == null ? '' : String(entry.PriceType).padStart(2, '0'),
-      rawAmount: entry?.PriceAmount,
     }))
-    .filter(
-      (entry) =>
-        entry.rawAmount != null && entry.rawAmount !== '' && !Number.isNaN(entry.amount)
-    );
+    .filter((entry) => entry.amount != null);
 
   const taxIncluded = numeric.find((entry) => entry.priceType === PRICE_TYPE_TAX_INCLUDED);
   if (taxIncluded) return { price: taxIncluded.amount, taxBasis: TAX_BASIS.included };

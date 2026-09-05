@@ -23,6 +23,7 @@ import {
   renderCompactInfo,
   renderSummary,
   renderCompactTotal,
+  shouldShowCompactTotal,
   tally,
 } from './mail-body.js';
 
@@ -187,12 +188,16 @@ export function composeOrder({
     .join('\n');
 
   const compactTotal = renderCompactTotal(counts);
+  // 税区分の出典を本文にちょうど 1 箇所にする。合計行の有無は
+  // renderCompactTotal の戻り値ではなく述語で判定する（書式を直しただけで
+  // 税区分の出方が変わらないように、閾値の持ち主を 1 つにしておく）
+  const hasCompactTotal = shouldShowCompactTotal(counts);
 
   const compactBody = [
     fill(isCoop ? p.templates.coopCompactGreeting : p.templates.bookstoreCompactGreeting, vars),
     '',
     // 合計行が出ないときだけ明細行に税区分を添える（出典が 1 箇所になるように）
-    items.map((item) => renderCompactItem(item, { withTaxLabel: !compactTotal })).join('\n'),
+    items.map((item) => renderCompactItem(item, { withTaxLabel: !hasCompactTotal })).join('\n'),
     // 合計行は 2 点以上のときだけ（1 点では書名行の価格と同じ数字が並ぶだけ）。
     // 空文字は keepBlankLines を通ってしまうので、ここで false に潰して落とす
     compactTotal || false,

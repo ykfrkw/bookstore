@@ -126,7 +126,8 @@ test('複数冊の合計と定価合計が出る', () => {
 test('価格不明の書籍があると但し書きが付く', () => {
   const mixed = [...items, { book: { isbn13: '9784003100028', title: '価格不明', price: null }, quantity: 1 }];
   const d = composeOrder({ destinationId: 'coop', items: mixed, profile });
-  assert.match(d.body, /価格不明の書籍を除く/);
+  // 点数まで書く（簡略版と同じ形）。「除く」が付くのは足した金額があるときだけ
+  assert.match(d.body, /価格不明 1点を除く/);
 });
 
 test('未知の宛先 id は既定の宛先に落ちる', () => {
@@ -520,7 +521,7 @@ test('税区分の注記と価格不明の注記は併記しても破綻しな�
   const mixedWithPriceless = [...taxedTwo('excluded', 'included'), pricelessBook];
   assert.equal(
     summaryOf(mixedWithPriceless),
-    '合計 3点 / 4冊 / 定価合計 ¥8,250（税抜・税込が混在）（価格不明の書籍を除く）'
+    '合計 3点 / 4冊 / 定価合計 ¥8,250（税抜・税込が混在）（価格不明 1点を除く）'
   );
   assert.equal(
     compactTotalOf(mixedWithPriceless),
@@ -531,6 +532,106 @@ test('税区分の注記と価格不明の注記は併記しても破綻しな�
     compactTotalOf([pricelessBook, { ...pricelessBook, quantity: 2 }]),
     '計 2点 3冊（価格不明 2点）'
   );
+});
+
+test('簡略版の書名行は旧データ（taxBasis なし）でもラベルを出さない', () => {
+  // v0.5.0 までに保存されたカートの Book は taxBasis を持たない。popup.js は
+  // loadCart() の結果をそのまま composeOrder に渡す（mergeFallback を通さない）
+  // ので、undefined がここまで届く。「（undefined）」を書かないことを固定する
+  assert.deepEqual(compactTitleLinesOf(taxedOne(undefined)), [
+    '『精神科診療のためのガイドブック』 1冊 ¥3,850',
+  ]);
+});
+
+test('知らない税区分の文字列は落とさず「不明」として数える', () => {
+  // TAX_ORDER に無い値を集合から消すと、残りが 1 つになって合計行が単一区分を
+  // 断言する（税抜の本と混ざっているのに `（税抜）` になる）。混在の事実を残す
+  assert.equal(
+    summaryOf(taxedTwo('excluded', 'incl')),
+    '合計 2点 / 3冊 / 定価合計 ¥8,250（税抜・税区分不明が混在）'
+  );
+  assert.equal(
+    compactTotalOf(taxedTwo('excluded', 'incl')),
+    '計 2点 3冊 定価合計 ¥8,250（税抜・税区分不明が混在）'
+  );
+  // 旧データの undefined も同じ扱い（片方だけ丸めて他方を落とす、が起きない）
+  assert.equal(
+    summaryOf(taxedTwo('included', undefined)),
+    '合計 2点 / 3冊 / 定価合計 ¥8,250（税込・税区分不明が混在）'
+  );
+  // 全点が知らない値なら「全点不明」と同じ。区分は出さない
+  assert.equal(summaryOf(taxedTwo('incl', 'incl')), '合計 2点 / 3冊 / 定価合計 ¥8,250');
+});
+
+test('フル版も全点が価格不明なら「価格不明」を必ず書く', () => {
+  // 但し書きを定価合計の内側に置くと、全点不明で amount が 0 になったときに
+  // total ごと消え、「価格不明」の語が本文から 1 つも無くなる。フル版は
+  // コピー経路で実際に送られる本文なので、そこで黙るのが一番まずい
+  const allUnknown = [pricelessBook, { ...pricelessBook, quantity: 2 }];
+  assert.equal(summaryOf(allUnknown), '合計 2点 / 3冊（価格不明 2点）');
+  // 簡略版と同じ構造（金額があるときだけ「を除く」が付く）
+  assert.equal(compactTotalOf(allUnknown), '計 2点 3冊（価格不明 2点）');
+  assert.match(summaryOf([...oneBook, pricelessBook]), /（価格不明 1点を除く）$/);
+
+  // 本文全体でも「価格不明」に触れていることを見る（合計行の抽出漏れ防止）
+  const body = composeOrder({ ...coopArgs, items: allUnknown }).body;
+  assert.match(body, /価格不明/);
+});
+
+/**
+ * 簡略版の本文に現れる税区分の「出典」の数。
+ * `（税抜・税区分不明が混在）` は `（税抜）` にはマッチしない（閉じ括弧が違う）
+ * ので、混在は `が混在` の 1 回だけ数えられる。
+ */
+const taxMentionCount = (body) => (body.match(/（税込）|（税抜）|が混在/g) || []).length;
+
+test('簡略版の税区分の出典はちょうど 1 箇所（不明・価格不明なら 0 箇所）', () => {
+  // withTaxLabel は「合計行が出ないとき」という条件に依存している。閾値を
+  // 片方だけ変えると、2 箇所に出る／0 箇所になるのどちらかが黙って起きる。
+  // 点数 × 冊数 × 税区分の組で不変条件そのものを回す
+  const BASES = ['included', 'excluded', 'unknown', undefined];
+  const bookOf = (taxBasis, price) => ({
+    ...oneBook[0].book,
+    taxBasis,
+    price,
+  });
+  // 正規化後に税込・税抜のどちらかを名乗れる点が 1 つでもあれば出典は 1 箇所
+  const namesTax = (basis) => basis === 'included' || basis === 'excluded';
+
+  let cases = 0;
+  for (const first of BASES) {
+    for (const firstPrice of [3850, null]) {
+      for (const quantity of [1, 2, 3]) {
+        const single = [{ book: bookOf(first, firstPrice), quantity }];
+        const expected = firstPrice != null && namesTax(first) ? 1 : 0;
+        const body = composeOrder({ ...coopArgs, items: single, compact: true }).body;
+        assert.equal(taxMentionCount(body), expected, `1点 ${first} ${firstPrice} ×${quantity}`);
+        cases += 1;
+
+        for (const second of BASES) {
+          for (const secondPrice of [2200, null]) {
+            const two = [
+              { book: bookOf(first, firstPrice), quantity },
+              { book: { ...secondBook.book, taxBasis: second, price: secondPrice }, quantity: 1 },
+            ];
+            const priced = [
+              firstPrice != null && namesTax(first),
+              secondPrice != null && namesTax(second),
+            ];
+            const twoBody = composeOrder({ ...coopArgs, items: two, compact: true }).body;
+            assert.equal(
+              taxMentionCount(twoBody),
+              priced.some(Boolean) ? 1 : 0,
+              `2点 ${first}/${second} ${firstPrice}/${secondPrice} ×${quantity}`
+            );
+            cases += 1;
+          }
+        }
+      }
+    }
+  }
+  // 組み合わせが痩せたら（fixture を触って for が回らなくなったら）気づけるように
+  assert.equal(cases, 4 * 2 * 3 * (1 + 4 * 2));
 });
 
 test('税抜から税込を計算していない（税率の係数がソースに無い）', () => {

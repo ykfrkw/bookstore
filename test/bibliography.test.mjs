@@ -92,6 +92,42 @@ test('PriceAmount が数値でない要素は飛ばす', () => {
   assert.equal(none.taxBasis, TAX_BASIS.unknown);
 });
 
+test('空白・真偽値・配列の PriceAmount を 0 や 1 として採らない', () => {
+  // Number('   ') === 0 / Number(true) === 1 / Number([]) === 0 なので、
+  // 「null でなく空文字でなく NaN でもない」だけの判定だと素通りし、
+  // `定価: ¥0（税込）` や `定価: ¥1（税込）` が税区分の断言つきで本文に載る。
+  // amount が 0 だとフル版の合計行が金額を出さないため、明細行とも食い違う
+  for (const rawAmount of ['   ', '\t\n', true, false, [], [4180], {}, '4,180', '¥4180', '1e3']) {
+    const b = parseOpenBd(
+      withPrices([{ PriceType: '02', PriceAmount: rawAmount }]),
+      '9784003100011'
+    );
+    assert.equal(b.price, null, `PriceAmount ${JSON.stringify(rawAmount)} を採っている`);
+    assert.equal(b.taxBasis, TAX_BASIS.unknown);
+  }
+
+  // 0 と負の値も採らない（無料や誤入力の 0 を「定価 ¥0」と断言しない）
+  for (const rawAmount of [0, '0', -100, '-100']) {
+    const b = parseOpenBd(withPrices([{ PriceType: '02', PriceAmount: rawAmount }]), '9784003100011');
+    assert.equal(b.price, null, `PriceAmount ${JSON.stringify(rawAmount)} を採っている`);
+  }
+
+  // 読める要素が後ろにあれば、読めない要素を飛ばしてそれを採る
+  const b = parseOpenBd(
+    withPrices([
+      { PriceType: '02', PriceAmount: '  ' },
+      { PriceType: '01', PriceAmount: ' 3800 ' },
+    ]),
+    '9784003100011'
+  );
+  assert.equal(b.price, 3800);
+  assert.equal(b.taxBasis, TAX_BASIS.excluded);
+
+  // 数値そのもの・小数の文字列は従来どおり採る
+  assert.equal(parseOpenBd(withPrices([{ PriceType: '02', PriceAmount: 4180 }]), '').price, 4180);
+  assert.equal(parseOpenBd(withPrices([{ PriceType: '02', PriceAmount: '4180.5' }]), '').price, 4180.5);
+});
+
 test('PriceType が数値で入っていても文字列として比べる', () => {
   const b = parseOpenBd(withPrices([{ PriceType: 2, PriceAmount: 4180 }]), '9784003100011');
   assert.equal(b.price, 4180);

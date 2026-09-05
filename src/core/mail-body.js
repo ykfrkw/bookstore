@@ -28,6 +28,17 @@ const TAX_WORD = {
 const TAX_ORDER = [TAX_BASIS.excluded, TAX_BASIS.included, TAX_BASIS.unknown];
 
 /**
+ * 表示できる税区分に丸める。**知らない値は捨てずに `unknown` として数える。**
+ *
+ * 落とすと数が合わなくなる。`['excluded', 'incl']` から `'incl'` を消せば
+ * 残りは 1 つになり、混ざっているのに合計行が `（税抜）` と断言する。
+ * 不明として数えれば「混在」が残り、少なくとも嘘にはならない。
+ */
+function normalizeTaxBasis(basis) {
+  return TAX_WORD[basis] ? basis : TAX_BASIS.unknown;
+}
+
+/**
  * 金額に添える税区分のラベル。
  *
  * **`unknown` にはラベルを付けない。** openBD の ONIX に PriceType が無い版元
@@ -52,7 +63,8 @@ export function taxLabel(basis) {
  * 税区分不明が混ざる場合も同じ扱いにする（不明を税込・税抜のどちらかに
  * 寄せて数えると、寄せた事実が本文のどこにも残らない）。
  *
- * @param {string[]} bases tally が返す、価格が分かっている点の税区分（重複なし）
+ * @param {string[]} bases tally が返す、価格が分かっている点の税区分（重複なし）。
+ *   `TAX_ORDER` に無い値は tally が `unknown` に丸めてから渡す
  */
 export function taxNote(bases = []) {
   const present = TAX_ORDER.filter((basis) => bases.includes(basis));
@@ -83,9 +95,10 @@ export function tally(items) {
     0
   );
   // 金額に足されていない点（価格不明）の税区分は数えない。足していない以上、
-  // 合計の性質には関わらないため
+  // 合計の性質には関わらないため。旧データの undefined と知らない値は
+  // normalizeTaxBasis が unknown に寄せる（落とすと混在の事実が消える）
   const taxBases = [
-    ...new Set(priced.map((item) => item.book.taxBasis || TAX_BASIS.unknown)),
+    ...new Set(priced.map((item) => normalizeTaxBasis(item.book.taxBasis))),
   ];
   return {
     titles: items.length,
@@ -104,12 +117,26 @@ export function tally(items) {
  * 後から出る。数字の正体をそのまま名前にする。
  */
 export function renderSummary({ titles, copies, amount, unknown, taxBases = [] }) {
-  const total = amount
-    ? ` / 定価合計 ${yen(amount)}${taxNote(taxBases)}${
-        unknown ? '（価格不明の書籍を除く）' : ''
-      }`
-    : '';
-  return `合計 ${titles}点 / ${copies}冊${total}`;
+  const total = amount ? ` / 定価合計 ${yen(amount)}${taxNote(taxBases)}` : '';
+  // 価格不明の注記は total の内側に置かない。全点が不明だと amount が 0 で
+  // total ごと消え、「価格不明」の語が本文から 1 つも無くなる。フル版は
+  // コピー経路で実際に送られる本文なので、そこで黙るのが一番まずい
+  const missing = unknown ? `（価格不明 ${unknown}点${total ? 'を除く' : ''}）` : '';
+  return `合計 ${titles}点 / ${copies}冊${total}${missing}`;
+}
+
+/**
+ * 簡略版に合計行を出すか。**述語として切り出してあるのは、compose.js が
+ * 「合計行が出ないなら書名行に税区分を添える」を同じ条件で判断するため。**
+ *
+ * 税区分の出典は本文にちょうど 1 箇所（合計行か書名行のどちらか）にする、
+ * というのが簡略版の不変条件である。閾値をここでしか持たないので、
+ * 変えても 2 箇所に出たり 0 箇所になったりしない。
+ * `renderCompactTotal` が返す文字列の真偽で代用しない（別関数の戻り値に
+ * 依存すると、書式を直しただけで税区分の出方が変わる）。
+ */
+export function shouldShowCompactTotal({ titles, copies }) {
+  return titles >= 2 || copies >= 2;
 }
 
 /**
@@ -135,7 +162,7 @@ export function renderSummary({ titles, copies, amount, unknown, taxBases = [] }
  * @returns {string} 1 点 1 冊なら空文字（呼び出し側が filter で落とす）
  */
 export function renderCompactTotal({ titles, copies, amount, unknown, taxBases = [] }) {
-  if (titles < 2 && copies < 2) return '';
+  if (!shouldShowCompactTotal({ titles, copies })) return '';
   const total = amount ? ` 定価合計 ${yen(amount)}${taxNote(taxBases)}` : '';
   const missing = unknown ? `（価格不明 ${unknown}点${total ? 'を除く' : ''}）` : '';
   return `計 ${titles}点 ${copies}冊${total}${missing}`;
@@ -170,16 +197,15 @@ export function renderItem(item, index) {
  * 簡略版の 1 件。ISBN 行と書名行の 2 行だけにする（著者・出版社・発行年は落とす）。
  * 書名は削らない。ISBN が 1 桁違ったときに人が気づける唯一の手がかりだから。
  *
- * **税区分のラベルはここには付けない。** 2 点以上・2 冊以上なら合計行が区分を
- * 名乗るので重複するうえ、簡略版は mailto の 2000 字に収めるための版で、
- * 和文 1 文字は encoded 9 字である。1 点 1 冊のときだけ区分の無い金額が残るが、
- * それは「何も名乗っていない」状態であって、税抜を税込と称する側の誤りではない。
+ * **税区分のラベルは、合計行が出ない 1 点 1 冊のときだけ付ける**
+ * （`withTaxLabel` を呼び出し側が `shouldShowCompactTotal` で決めて渡す）。
+ * 税区分の出典を本文にちょうど 1 箇所だけ置くための出し分けである。
+ * 2 点以上・2 冊以上では合計行が区分を名乗るので、ここに重ねると重複するうえ、
+ * 簡略版は mailto の 2000 字に収めるための版で、和文 1 文字は encoded 9 字。
+ * 逆に 1 点 1 冊で落とすと、税抜か税込か分からない金額が本文にただ 1 つ載る。
  */
 export function renderCompactItem(item, { withTaxLabel = false } = {}) {
   const b = item.book || {};
-  // 税区分は通常は合計行が担う。ただし合計行が出ないとき（1 点 1 冊）は、
-  // 税抜か税込か分からない金額が本文にただ 1 つ載ることになるので、
-  // そのときだけ明細行に添える（呼び出し側が withTaxLabel を渡す）
   const tax = withTaxLabel ? taxLabel(b.taxBasis) : '';
   const price = b.price == null ? '' : ` ${yen(b.price)}${tax}`;
   return [
