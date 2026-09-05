@@ -244,8 +244,8 @@ test('保存済みの mailOpener は保たれる', () => {
 });
 
 test('未知の mailOpener は auto に丸まる', () => {
-  // 未知の値が素通りすると looksUnopened が常に偽になり（'auto' でないため）
-  // 退路が二度と出ない＝「押しても何も起きない」に静かに戻る
+  // 未知の値が素通りすると resolveMailTarget が 'gmail' 以外として扱うので、
+  // 設定で Gmail に固定したつもりが黙って既定のメーラーに戻る
   for (const bad of ['outlook', '', null, 'GMAIL', 0]) {
     const p = withDefaults({ defaults: { mailOpener: bad } });
     assert.equal(p.defaults.mailOpener, 'auto', `${String(bad)} を丸めていない`);

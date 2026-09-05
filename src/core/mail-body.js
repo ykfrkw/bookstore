@@ -49,22 +49,28 @@ export function renderSummary({ titles, copies, amount, unknown }) {
 }
 
 /**
- * 簡略版の合計行。**2 点以上のときだけ出す。**
+ * 簡略版の合計行。**「1 点かつ 1 冊」のときだけ出さない。**
  *
  * 簡略版が使われるのは 1〜3 点なので、ここを落とすと「2〜3 点の注文にだけ
  * 合計が無い」状態になる。複数冊を 1 通にまとめる意味は、受け取る側が
  * 1 通で総額を把握できることにもあるので、点数が増えたときこそ要る。
- * 1 点のときは書名行に価格が出ており、合計行は同じ数字の繰り返しになる。
+ *
+ * **省けるのは合計が書名行の数字と一致するときだけで、それは 1 点かつ 1 冊の
+ * ときに限る。** 簡略版の書名行は `『書名』 3冊 ¥3,800` の形で、¥ は単価である。
+ * 冊数が 2 以上なら総額は単価と違う数字になるのに、簡略版にはフル版のような
+ * `定価` / `冊数` / `合計` のラベルが無いので、本文に現れる唯一の金額を総額と
+ * 読まれる。生協が単価で予算計上すれば差額が後から出る（誤発注は研究費の
+ * 執行事故になる）。だから点数ではなく「点数と冊数の両方が 1」で判定する。
  *
  * **価格不明があるときは点数を必ず添える。** 分かる分だけ足した額を黙って
- * 出すと、その額で予算が足りると読まれる（誤発注は研究費の執行事故になる）。
+ * 出すと、その額で予算が足りると読まれる。
  * 全点が不明なら金額を出さず、不明の点数だけを残す。
  *
  * @param {{titles:number, copies:number, amount:number, unknown:number}} counts
- * @returns {string} 1 点以下なら空文字（呼び出し側が filter で落とす）
+ * @returns {string} 1 点 1 冊なら空文字（呼び出し側が filter で落とす）
  */
 export function renderCompactTotal({ titles, copies, amount, unknown }) {
-  if (titles < 2) return '';
+  if (titles < 2 && copies < 2) return '';
   const estimate = amount ? ` 概算 ${yen(amount)}` : '';
   const missing = unknown ? `（価格不明 ${unknown}点${estimate ? 'を除く' : ''}）` : '';
   return `計 ${titles}点 ${copies}冊${estimate}${missing}`;

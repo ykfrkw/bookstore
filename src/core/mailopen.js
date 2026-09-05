@@ -80,6 +80,12 @@ export function buildGmailCompose({ to, cc = '', subject = '', body = '' }) {
  * 代償: OS のメーラーを使っている利用者には `mailto:` ＋ target="_blank" の
  * 既知の挙動で**空白タブが残りうる**。ハンドラが 1 つも無い利用者にとっては、
  * その空白タブが「渡す先が無い」という唯一の目に見える signal でもある。
+ *
+ * **常に true なので、現在この値で分岐している呼び出し側は 1 つも無い**
+ * （3 面とも構造的に新しいタブで開くため）。それでも戻り値に残すのは、
+ * 「新しいタブで開く」が面の実装都合ではなく core が決めた契約だと示すため。
+ * `test/mailopen.test.mjs` が全 opener × 全経路で true を固定しているので、
+ * 誰かが一部の経路だけ同じタブに戻そうとすれば必ず落ちる。
  */
 export function resolveMailTarget({ plan, opener = 'auto' }) {
   if (opener !== 'gmail') {

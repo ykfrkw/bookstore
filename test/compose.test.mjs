@@ -329,7 +329,7 @@ const compactTotalOf = (items) =>
     .body.split('\n')
     .find((line) => line.startsWith('計 '));
 
-test('簡略版は 2 点以上のときだけ合計行を出す', () => {
+test('簡略版は 2 点以上なら合計行を出す', () => {
   // 簡略版が使われるのは 1〜3 点。ここを落とすと「2〜3 点の注文にだけ合計が
   // 無い」状態になり、受け取った側も出した側も金額を数え直すことになる
   assert.equal(compactTotalOf([...oneBook, secondBook]), '計 2点 3冊 概算 ¥8,250');
@@ -337,8 +337,29 @@ test('簡略版は 2 点以上のときだけ合計行を出す', () => {
     compactTotalOf([...oneBook, secondBook, pricelessBook]),
     '計 3点 4冊 概算 ¥8,250（価格不明 1点を除く）'
   );
-  // 1 点では出さない。書名行に価格が出ているので同じ数字の繰り返しになる
+  // 1 点 1 冊では出さない。書名行に価格が出ているので同じ数字の繰り返しになる
   assert.equal(compactTotalOf(oneBook), undefined);
+});
+
+test('簡略版は 1 点でも 2 冊以上なら合計行を出す（単価と総額が違うため）', () => {
+  // 簡略版の書名行は『書名』 3冊 ¥3,850 の形で、¥ は単価。冊数が 2 以上だと
+  // 総額は単価と違う数字になるのに、簡略版にはフル版の `定価` / `冊数` /
+  // `合計` のようなラベルが無いので、本文に現れる唯一の金額を総額と読まれる。
+  // 生協が単価で予算計上すれば差額が後から出る（研究費の執行事故）
+  const threeCopies = [{ ...oneBook[0], quantity: 3 }];
+  assert.equal(compactTotalOf(threeCopies), '計 1点 3冊 概算 ¥11,550');
+
+  // 単価 × 冊数であること自体を書名行から取り直して確かめる。期待値を
+  // 直書きするだけだと、単価と冊数のどちらを間違えても気づけない
+  const unitPrice = oneBook[0].book.price;
+  assert.equal(unitPrice * 3, 11550);
+  const body = composeOrder({ ...coopArgs, items: threeCopies, compact: true }).body;
+  assert.match(body, /3冊 ¥3,850/); // 書名行に出るのは単価
+  assert.match(body, /概算 ¥11,550/); // 合計行に出るのは総額
+
+  // 価格不明でも冊数が 2 以上なら「何冊の注文か」だけは残す
+  const priceless3 = [{ ...oneBook[0], book: { ...oneBook[0].book, price: null }, quantity: 3 }];
+  assert.equal(compactTotalOf(priceless3), '計 1点 3冊（価格不明 1点）');
 });
 
 test('簡略版の合計行は価格不明の点数を必ず書く', () => {
@@ -353,8 +374,8 @@ test('簡略版の合計行は価格不明の点数を必ず書く', () => {
 });
 
 test('合計行を足しても 2 点の簡略版は mailto に収まる', () => {
-  // 合計行は encoded で 180 字前後を食う。簡略版が収まらなくなると、
-  // 2 点の注文が黙ってコピー経路（貼り付けが要る）に落ちる
+  // 合計行は encoded で 75 字（注記が付くと 169 字）を食う。簡略版が
+  // 収まらなくなると、2 点の注文が黙ってコピー経路（貼り付けが要る）に落ちる
   const compact = composeOrder({
     ...coopArgs,
     items: [...oneBook, secondBook],
